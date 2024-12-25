@@ -110,22 +110,57 @@ You'll need a Google API key with Gemini Vision API access enabled:
 
 ## Usage
 
-### Process a Single Image
+### Quick Start
+
+1. Generate metadata for a directory of images:
+```bash
+image_sense generate-metadata path/to/photos --api-key YOUR_API_KEY
+```
+This will analyze all images and create a metadata.csv file with detailed descriptions, keywords, and technical details.
+
+2. Process a single image:
 ```bash
 image_sense process path/to/image.jpg
 ```
 
-### Process a Directory of Images
+3. Process multiple images with advanced options:
 ```bash
 image_sense bulk-process path/to/directory --api-key YOUR_API_KEY --output-format xml
 ```
 
-### Options
-- `--no-compress`: Disable image compression
-- `--output-format`: Choose output format (csv/xml)
+### Command Options
+
+#### Generate Metadata (Recommended)
+The `generate-metadata` command analyzes images and creates structured metadata files without modifying the originals:
+```bash
+image_sense generate-metadata path/to/directory --api-key YOUR_API_KEY [OPTIONS]
+```
+
+Key features:
+- Non-destructive: Original images remain unchanged
+- Flexible output: Choose between CSV and XML formats
+- Smart compression: Optimized for faster processing
+- Batch processing: Handle multiple images efficiently
+- Incremental updates: Skip already processed files
+
+Options:
+- `--output-format, -f`: Choose output format (csv/xml)
+- `--output-file`: Specify custom output file path
+- `--model`: Select AI model to use
 - `--batch-size`: Set custom batch size
-- `--rename-files`: Enable file renaming
-- `--prefix`: Set prefix for renamed files
+- `--no-compress`: Disable image compression
+- `--skip-existing`: Skip files that already have metadata
+
+Example with incremental processing:
+```bash
+# First run - process all images
+image_sense generate-metadata photos/ --api-key YOUR_API_KEY
+
+# Later runs - only process new images
+image_sense generate-metadata photos/ --api-key YOUR_API_KEY --skip-existing
+```
+
+For detailed command documentation, see [Commands Documentation](docs/commands.md).
 
 ## Output Formats
 

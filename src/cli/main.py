@@ -9,6 +9,8 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 import logging
+import pandas as pd
+import xml.etree.ElementTree as ET
 
 from ..core.image_processor import ImageProcessor
 from ..core.metadata_handler import MetadataHandler
@@ -110,6 +112,99 @@ async def bulk_process(directory, api_key, model, batch_size, no_compress, outpu
             else:
                 processor.save_to_xml(results, output_file)
             click.echo(f"Results saved to {output_file}")
+        
+        click.echo("Processing complete!")
+        
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+        raise click.Abort()
+
+@cli.command()
+@click.argument('directory', type=click.Path(exists=True))
+@click.option('--api-key', required=True, help='API key for the image processing service')
+@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
+              help='Output format for metadata (csv or xml)')
+@click.option('--output-file', type=click.Path(), default=None,
+              help='Path to save the output file. Defaults to metadata.[format] in the input directory')
+@click.option('--model', default=None, help='Model to use for processing (default: gemini-2.0-flash-exp)')
+@click.option('--batch-size', type=int, default=None, help='Number of images to process in parallel')
+@click.option('--no-compress', is_flag=True, help='Disable image compression (not recommended for large files)')
+@click.option('--skip-existing', is_flag=True, help='Skip files that already have metadata in the output format')
+async def generate_metadata(directory: str, api_key: str, output_format: str, output_file: str,
+                          model: str, batch_size: int, no_compress: bool, skip_existing: bool):
+    """Generate metadata files (CSV/XML) for images without modifying the original files."""
+    try:
+        # Initialize processor with configuration values as defaults
+        processor = ImageProcessor(
+            api_key=api_key,
+            model=model,
+            batch_size=batch_size,
+            rename_files=False,  # Never rename files in metadata-only mode
+            prefix=None
+        )
+        
+        # Determine output path
+        if output_file:
+            output_path = Path(output_file)
+        else:
+            output_path = Path(directory) / f"metadata.{output_format}"
+        
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Check for existing metadata if skip_existing is enabled
+        existing_metadata = set()
+        if skip_existing and output_path.exists():
+            try:
+                if output_format == 'csv':
+                    df = pd.read_csv(output_path)
+                    existing_metadata = set(df['path'].tolist())
+                else:  # xml
+                    tree = ET.parse(output_path)
+                    root = tree.getroot()
+                    existing_metadata = set(img.find('path').text for img in root.findall('image'))
+                logging.info(f"Found {len(existing_metadata)} existing entries in {output_path}")
+            except Exception as e:
+                logging.warning(f"Error reading existing metadata file: {str(e)}")
+        
+        # Process images
+        click.echo(f"Processing images in {directory}...")
+        compress = not no_compress if no_compress is not None else config.compression_enabled
+        
+        # Filter out existing entries if skip_existing is enabled
+        image_files = processor._get_image_files(directory)
+        if skip_existing:
+            original_count = len(image_files)
+            image_files = [f for f in image_files if str(f) not in existing_metadata]
+            skipped_count = original_count - len(image_files)
+            if skipped_count > 0:
+                click.echo(f"Skipping {skipped_count} files that already have metadata")
+        
+        results = await processor.process_images(directory, compress=compress, files=image_files)
+        
+        # Save results
+        if results:
+            if output_format == 'csv':
+                if skip_existing and output_path.exists():
+                    # Append to existing CSV
+                    existing_df = pd.read_csv(output_path)
+                    new_df = pd.DataFrame(results)
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    combined_df.to_csv(output_path, index=False)
+                else:
+                    processor.save_to_csv(results, output_path)
+            else:
+                if skip_existing and output_path.exists():
+                    # Merge with existing XML
+                    tree = ET.parse(output_path)
+                    root = tree.getroot()
+                    processor.append_to_xml(results, root)
+                    tree.write(output_path)
+                else:
+                    processor.save_to_xml(results, output_path)
+            click.echo(f"Metadata saved to {output_path}")
+        else:
+            click.echo("No new images were processed")
         
         click.echo("Processing complete!")
         
