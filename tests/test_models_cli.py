@@ -4,114 +4,60 @@ CLI test script for verifying model functionality
 
 import os
 import pytest
+from pathlib import Path
 from click.testing import CliRunner
-from src.cli import process_images  # Assuming your CLI entry point is here
-import pandas as pd
-from lxml import etree
+from src.cli.main import cli
 
-# Constants for test paths
-TEST_IMAGES_DIR = "tests/test_images"
-TEST_METADATA_DIR = "tests/test_metadata"
-TEST_IMAGE_PATH = os.path.join(TEST_IMAGES_DIR, "test.jpg")
-TEST_CSV_PATH = os.path.join(TEST_METADATA_DIR, "metadata.csv")
-TEST_XML_PATH = os.path.join(TEST_METADATA_DIR, "metadata.xml")
+@pytest.fixture
+def runner():
+    return CliRunner()
 
-# Fixture to set up test environment
-@pytest.fixture(scope="module", autouse=True)
-def setup_test_environment():
-    # Create test directories and a dummy image if they don't exist
-    os.makedirs(TEST_IMAGES_DIR, exist_ok=True)
-    os.makedirs(TEST_METADATA_DIR, exist_ok=True)
-    if not os.path.exists(TEST_IMAGE_PATH):
-        # Create a dummy image file (replace with actual image creation if needed)
-        open(TEST_IMAGE_PATH, "w").close()
-    yield
-    # Cleanup: Remove generated files after tests
-    if os.path.exists(TEST_CSV_PATH):
-        os.remove(TEST_CSV_PATH)
-    if os.path.exists(TEST_XML_PATH):
-        os.remove(TEST_XML_PATH)
-
-# Test single image processing with Gemini model and CSV output
-def test_single_gemini_csv():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGE_PATH,
-            "--model",
-            "gemini",
-            "--output",
-            "csv",
-            "--output-file",
-            TEST_CSV_PATH,
-        ],
-    )
+def test_single_gemini_csv(runner, test_image_path):
+    """Test single image processing with Gemini model and CSV output"""
+    result = runner.invoke(cli, [
+        'process',
+        test_image_path,
+        '--output-format', 'csv'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_CSV_PATH)
-    df = pd.read_csv(TEST_CSV_PATH)
-    assert not df.empty
-    # Add more assertions to validate CSV content
+    assert "Metadata saved to:" in result.output
 
-# Test single image processing with Anthropic model and CSV output
-def test_single_anthropic_csv():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGE_PATH,
-            "--model",
-            "anthropic",
-            "--output",
-            "csv",
-            "--output-file",
-            TEST_CSV_PATH,
-        ],
-    )
+def test_single_gemini_xml(runner, test_image_path):
+    """Test single image processing with Gemini model and XML output"""
+    result = runner.invoke(cli, [
+        'process',
+        test_image_path,
+        '--output-format', 'xml'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_CSV_PATH)
-    df = pd.read_csv(TEST_CSV_PATH)
-    assert not df.empty
-    # Add more assertions to validate CSV content
+    assert "Metadata saved to:" in result.output
 
-# Test single image processing with Gemini model and XML output
-def test_single_gemini_xml():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGE_PATH,
-            "--model",
-            "gemini",
-            "--output",
-            "xml",
-            "--output-file",
-            TEST_XML_PATH,
-        ],
-    )
+def test_bulk_gemini_csv(runner, test_images_dir):
+    """Test bulk processing with Gemini model and CSV output"""
+    result = runner.invoke(cli, [
+        'bulk-process',
+        test_images_dir,
+        '--output-format', 'csv'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_XML_PATH)
-    tree = etree.parse(TEST_XML_PATH)
-    assert tree is not None
-    # Add more assertions to validate XML content
+    assert "Processing images" in result.output
 
-# Test single image processing with Anthropic model and XML output
-def test_single_anthropic_xml():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGE_PATH,
-            "--model",
-            "anthropic",
-            "--output",
-            "xml",
-            "--output-file",
-            TEST_XML_PATH,
-        ],
-    )
+def test_bulk_gemini_xml(runner, test_images_dir):
+    """Test bulk processing with Gemini model and XML output"""
+    result = runner.invoke(cli, [
+        'bulk-process',
+        test_images_dir,
+        '--output-format', 'xml'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_XML_PATH)
-    tree = etree.parse(TEST_XML_PATH)
-    assert tree is not None
-    # Add more assertions to validate XML content 
+    assert "Processing images" in result.output
+
+def test_missing_api_key(runner, test_image_path, monkeypatch):
+    """Test error handling when API key is missing"""
+    monkeypatch.delenv('GOOGLE_API_KEY', raising=False)
+    result = runner.invoke(cli, [
+        'process',
+        test_image_path
+    ])
+    assert result.exit_code == 1
+    assert "GOOGLE_API_KEY environment variable not set" in result.output 

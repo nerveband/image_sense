@@ -4,113 +4,52 @@ Test bulk image processing functionality
 
 import os
 import pytest
+from pathlib import Path
 from click.testing import CliRunner
-from src.cli import process_images  # Assuming your CLI entry point is here
-import pandas as pd
-from lxml import etree
+from src.cli.main import cli
 
-# Constants for test paths
-TEST_IMAGES_DIR = "tests/test_images"
-TEST_METADATA_DIR = "tests/test_metadata"
-TEST_CSV_PATH = os.path.join(TEST_METADATA_DIR, "metadata.csv")
-TEST_XML_PATH = os.path.join(TEST_METADATA_DIR, "metadata.xml")
+@pytest.fixture
+def runner():
+    return CliRunner()
 
-# Fixture to set up test environment
-@pytest.fixture(scope="module", autouse=True)
-def setup_test_environment():
-    # Create test directories if they don't exist
-    os.makedirs(TEST_IMAGES_DIR, exist_ok=True)
-    os.makedirs(TEST_METADATA_DIR, exist_ok=True)
-    yield
-    # Cleanup: Remove generated files after tests
-    if os.path.exists(TEST_CSV_PATH):
-        os.remove(TEST_CSV_PATH)
-    if os.path.exists(TEST_XML_PATH):
-        os.remove(TEST_XML_PATH)
-
-# Test bulk processing with Gemini model and CSV output
-def test_bulk_gemini_csv():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGES_DIR,
-            "--model",
-            "gemini",
-            "--output",
-            "csv",
-            "--output-file",
-            TEST_CSV_PATH,
-        ],
-    )
+def test_bulk_gemini_csv(runner, test_images_dir):
+    """Test bulk processing with Gemini model and CSV output"""
+    result = runner.invoke(cli, [
+        'bulk-process',
+        test_images_dir,
+        '--output-format', 'csv'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_CSV_PATH)
-    df = pd.read_csv(TEST_CSV_PATH)
-    assert not df.empty
-    # Add more assertions to validate CSV content
+    assert "Processing images" in result.output
 
-# Test bulk processing with Anthropic model and CSV output
-def test_bulk_anthropic_csv():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGES_DIR,
-            "--model",
-            "anthropic",
-            "--output",
-            "csv",
-            "--output-file",
-            TEST_CSV_PATH,
-        ],
-    )
+def test_bulk_gemini_xml(runner, test_images_dir):
+    """Test bulk processing with Gemini model and XML output"""
+    result = runner.invoke(cli, [
+        'bulk-process',
+        test_images_dir,
+        '--output-format', 'xml'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_CSV_PATH)
-    df = pd.read_csv(TEST_CSV_PATH)
-    assert not df.empty
-    # Add more assertions to validate CSV content
+    assert "Processing images" in result.output
 
-# Test bulk processing with Gemini model and XML output
-def test_bulk_gemini_xml():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGES_DIR,
-            "--model",
-            "gemini",
-            "--output",
-            "xml",
-            "--output-file",
-            TEST_XML_PATH,
-        ],
-    )
+def test_bulk_recursive(runner, test_images_dir):
+    """Test recursive bulk processing"""
+    result = runner.invoke(cli, [
+        'bulk-process',
+        test_images_dir,
+        '--recursive'
+    ])
     assert result.exit_code == 0
-    assert os.path.exists(TEST_XML_PATH)
-    tree = etree.parse(TEST_XML_PATH)
-    assert tree is not None
-    # Add more assertions to validate XML content
+    assert "Processing images" in result.output
 
-# Test bulk processing with Anthropic model and XML output
-def test_bulk_anthropic_xml():
-    runner = CliRunner()
-    result = runner.invoke(
-        process_images,
-        [
-            TEST_IMAGES_DIR,
-            "--model",
-            "anthropic",
-            "--output",
-            "xml",
-            "--output-file",
-            TEST_XML_PATH,
-        ],
-    )
-    assert result.exit_code == 0
-    assert os.path.exists(TEST_XML_PATH)
-    tree = etree.parse(TEST_XML_PATH)
-    assert tree is not None
-    # Add more assertions to validate XML content
+def test_bulk_empty_directory(runner, tmp_path):
+    """Test bulk processing with empty directory"""
+    result = runner.invoke(cli, [
+        'bulk-process',
+        str(tmp_path)
+    ])
+    assert result.exit_code == 1
+    assert "No images found in directory" in result.output
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__]) 

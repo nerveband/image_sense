@@ -1,20 +1,14 @@
-# AI Image Processor
+# Image Processor
 
-A powerful command-line tool for processing images with AI-powered metadata generation.
+A command-line tool for generating detailed metadata for images using Google's Gemini Vision AI.
 
 ## Features
 
-- Process multiple images simultaneously
-- Generate accurate image descriptions and keywords using Google's Gemini AI
-- Support for multiple image formats (JPEG, PNG, WebP)
-- Export metadata in various formats (CSV, XML)
-- Command-line interface for automation
-- Cross-platform support (Windows, macOS, Linux)
-
-## Prerequisites
-
-- Python 3.8 or higher
-- pip (Python package installer)
+- Generate detailed image descriptions and metadata
+- Support for single image and bulk processing
+- Multiple output formats (CSV, XML)
+- Recursive directory processing
+- Progress tracking for bulk operations
 
 ## Installation
 
@@ -24,115 +18,76 @@ git clone https://github.com/yourusername/image-processor.git
 cd image-processor
 ```
 
-2. Set up Python environment:
-
-On macOS/Linux:
+2. Install dependencies:
 ```bash
-python3 -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-On Windows:
+3. Set up your environment:
+   - Create a `.env` file in the project root
+   - Add your Google API key:
+     ```
+     GOOGLE_API_KEY=your_api_key_here
+     ```
+
+## Command Line Usage
+
+The tool provides two main commands:
+
+### 1. Process Single Image
+
 ```bash
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
+image_processor process IMAGE_PATH [OPTIONS]
 ```
 
-3. Set up environment variables:
-```bash
-# Copy example environment file
-cp .env.example .env
+Options:
+- `-f, --output-format [csv|xml]`: Output format for metadata (default: csv)
 
-# Edit .env and add your Gemini API key
-# On macOS/Linux:
-nano .env
-# On Windows:
-notepad .env
+Example:
+```bash
+image_processor process path/to/image.jpg --output-format xml
 ```
 
-## Usage
+### 2. Bulk Process Directory
 
-### Command Line Interface
-
-Process a single image:
 ```bash
-python -m src.cli.main process --input path/to/image.jpg
+image_processor bulk-process DIRECTORY [OPTIONS]
 ```
 
-Process a directory of images:
+Options:
+- `-f, --output-format [csv|xml]`: Output format for metadata (default: csv)
+- `-r, --recursive`: Process directories recursively
+
+Example:
 ```bash
-python -m src.cli.main process-batch --input path/to/images/
+image_processor bulk-process path/to/directory --output-format csv --recursive
 ```
 
-Export options:
-```bash
-python -m src.cli.main process --input image.jpg --export csv,xml --output-dir ./output
-```
+## Output Formats
+
+### CSV Format
+The CSV output includes:
+- File path
+- Image description
+- Technical details
+- Visual elements
+- Colors and composition
+- Mood/atmosphere
+- Potential use cases
+
+### XML Format
+The XML output provides the same information in a structured XML format with tags for each metadata category.
+
+## Requirements
+
+- Python 3.8 or higher
+- Google API key with Gemini Vision API access
+- Supported image formats: JPG, JPEG, PNG, WebP
 
 ## Development
 
-### Project Structure
-```
-image_processor/
-├── src/
-│   ├── core/           # Core processing modules
-│   └── cli/            # Command-line interface
-├── tests/              # Test files
-├── resources/          # Application resources
-│   └── exiftool/       # Bundled ExifTool
-└── docs/              # Documentation
-```
-
-### Running Tests
-```bash
-# Activate virtual environment first
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Run tests with coverage report
-pytest
-```
-
-## Configuration
-
-The application can be configured through:
-- Environment variables (see `.env.example`)
-- Command-line arguments
-
-### Environment Variables
-
-- `GOOGLE_API_KEY`: Your Gemini API key (required)
-- `LOG_LEVEL`: Logging level (default: INFO)
-- `BATCH_SIZE`: Number of images to process in a batch (default: 100)
-- `ENABLE_COMPRESSION`: Enable image compression (default: true)
-- `MAX_RETRIES`: Maximum number of retries for failed API calls (default: 3)
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## Troubleshooting
-
-1. If image processing fails:
-   - Verify your API key is correctly set
-   - Check the supported image formats
-   - Ensure you have internet connectivity
-   - Look for error messages in the console
-
-2. For development issues:
-   - Check the logs
-   - Run tests to verify functionality
+See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for development setup and guidelines.
 
 ## License
 
-[MIT License](LICENSE)
-
-## Acknowledgments
-
-- Google Gemini AI for image analysis
-- ExifTool for metadata management 
+MIT License - see [LICENSE](LICENSE) for details 
