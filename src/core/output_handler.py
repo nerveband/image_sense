@@ -1,86 +1,49 @@
-"""
-Output handler for saving metadata in different formats
-"""
+"""Output handling utilities"""
 
 import os
 import csv
+import json
 from pathlib import Path
-from typing import List, Dict, Any
-from lxml import etree
+from typing import Dict, Any
+import xml.etree.ElementTree as ET
+from xml.dom import minidom
 
-class OutputHandler:
-    """Handles saving metadata in different formats"""
+def save_metadata(metadata: str, image_path: str, output_format: str = 'csv') -> str:
+    """
+    Save metadata to a file in the specified format
     
-    def __init__(self, output_dir: str):
-        """
-        Initialize the output handler
+    Args:
+        metadata: The metadata to save
+        image_path: Path to the original image
+        output_format: Format to save in (csv or xml)
         
-        Args:
-            output_dir: Directory to save output files
-        """
-        self.output_dir = Path(output_dir)
-        os.makedirs(self.output_dir, exist_ok=True)
+    Returns:
+        Path to the saved metadata file
+    """
+    # Create output directory if it doesn't exist
+    output_dir = os.path.join(os.path.dirname(image_path), 'metadata')
+    os.makedirs(output_dir, exist_ok=True)
     
-    def export_to_csv(self, metadata: List[Dict[str, Any]], filename: str):
-        """
-        Export metadata to CSV format
-        
-        Args:
-            metadata: List of metadata dictionaries
-            filename: Output filename
-        """
-        output_path = self.output_dir / filename
-        
-        # Ensure all required fields are present
-        fieldnames = ['file', 'description', 'keywords', 'categories']
-        
+    # Get base filename without extension
+    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    
+    if output_format == 'csv':
+        output_path = os.path.join(output_dir, f"{base_name}_metadata.csv")
         with open(output_path, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            
-            for item in metadata:
-                # Convert lists to comma-separated strings and handle missing fields
-                row = {
-                    'file': item.get('file', ''),
-                    'description': item.get('description', ''),
-                    'keywords': ','.join(item.get('keywords', [])) if isinstance(item.get('keywords'), list) else item.get('keywords', ''),
-                    'categories': ','.join(item.get('categories', [])) if isinstance(item.get('categories'), list) else item.get('categories', '')
-                }
-                writer.writerow(row)
-    
-    def export_to_xml(self, metadata: List[Dict[str, Any]], filename: str):
-        """
-        Export metadata to XML format
+            writer = csv.writer(f)
+            writer.writerow(['Image', 'Metadata'])
+            writer.writerow([os.path.basename(image_path), metadata])
+    else:  # xml
+        output_path = os.path.join(output_dir, f"{base_name}_metadata.xml")
+        root = ET.Element('metadata')
+        image = ET.SubElement(root, 'image')
+        image.text = os.path.basename(image_path)
+        description = ET.SubElement(root, 'description')
+        description.text = metadata
         
-        Args:
-            metadata: List of metadata dictionaries
-            filename: Output filename
-        """
-        output_path = self.output_dir / filename
-        
-        # Create root element
-        root = etree.Element('metadata')
-        
-        for item in metadata:
-            # Create image element
-            image = etree.SubElement(root, 'image')
+        # Pretty print XML
+        xml_str = minidom.parseString(ET.tostring(root)).toprettyxml(indent="  ")
+        with open(output_path, 'w') as f:
+            f.write(xml_str)
             
-            # Add file element
-            file_elem = etree.SubElement(image, 'file')
-            file_elem.text = item['file']
-            
-            # Add description element
-            desc_elem = etree.SubElement(image, 'description')
-            desc_elem.text = item['description']
-            
-            # Add keywords element
-            keywords_elem = etree.SubElement(image, 'keywords')
-            keywords_elem.text = ','.join(item['keywords']) if isinstance(item['keywords'], list) else item['keywords']
-            
-            # Add categories element
-            categories_elem = etree.SubElement(image, 'categories')
-            categories_elem.text = ','.join(item['categories']) if isinstance(item['categories'], list) else item['categories']
-        
-        # Write to file
-        tree = etree.ElementTree(root)
-        tree.write(str(output_path), pretty_print=True, xml_declaration=True, encoding='utf-8') 
+    return output_path 

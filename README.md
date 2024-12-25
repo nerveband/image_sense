@@ -1,6 +1,10 @@
-# Image Processor
+# Image Sense
 
-A command-line tool for generating detailed metadata for images using Google's Gemini Vision AI.
+<p align="center">
+  <img src="icon/Image Sense Icon.png" alt="Image Sense Logo" width="200"/>
+</p>
+
+A powerful command-line tool for generating intelligent image metadata using Google's Gemini Vision AI.
 
 ## Features
 
@@ -14,8 +18,8 @@ A command-line tool for generating detailed metadata for images using Google's G
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/image-processor.git
-cd image-processor
+git clone https://github.com/yourusername/image-sense.git
+cd image-sense
 ```
 
 2. Install dependencies:
@@ -37,7 +41,7 @@ The tool provides two main commands:
 ### 1. Process Single Image
 
 ```bash
-image_processor process IMAGE_PATH [OPTIONS]
+image_sense process IMAGE_PATH [OPTIONS]
 ```
 
 Options:
@@ -45,13 +49,13 @@ Options:
 
 Example:
 ```bash
-image_processor process path/to/image.jpg --output-format xml
+image_sense process path/to/image.jpg --output-format xml
 ```
 
 ### 2. Bulk Process Directory
 
 ```bash
-image_processor bulk-process DIRECTORY [OPTIONS]
+image_sense bulk-process DIRECTORY [OPTIONS]
 ```
 
 Options:
@@ -60,7 +64,7 @@ Options:
 
 Example:
 ```bash
-image_processor bulk-process path/to/directory --output-format csv --recursive
+image_sense bulk-process path/to/directory --output-format csv --recursive
 ```
 
 ## Output Formats

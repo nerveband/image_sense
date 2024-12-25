@@ -7,6 +7,7 @@ from typing import Optional, Tuple, List
 from PIL import Image
 import logging
 import shutil
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -340,3 +341,24 @@ def create_llm_optimized_batch(
         if 'temp_dir' in locals():
             shutil.rmtree(temp_dir, ignore_errors=True)
         raise ImageCompressionError(f"Failed to create LLM-optimized batch: {str(e)}") 
+
+def validate_image_path(path: str) -> Optional[str]:
+    """
+    Validate that the given path points to a valid image file.
+    
+    Args:
+        path: Path to the image file
+        
+    Returns:
+        Validated path if valid, None otherwise
+    """
+    if not os.path.exists(path):
+        return None
+        
+    path = os.path.abspath(path)
+    ext = os.path.splitext(path)[1].lower()
+    
+    if ext not in ['.jpg', '.jpeg', '.png', '.webp']:
+        return None
+        
+    return path 

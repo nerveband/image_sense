@@ -48,10 +48,11 @@ def process(image_path: str, output_format: str):
         # Save output
         output_path = save_metadata(result, image_path, output_format)
         click.echo(f"Metadata saved to: {output_path}")
+        sys.exit(0)
 
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(1)
+        sys.exit(2)
 
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True))
@@ -91,9 +92,11 @@ def bulk_process(directory: str, output_format: str, recursive: bool):
                 except Exception as e:
                     click.echo(f"Error processing {image_path.name}: {str(e)}", err=True)
 
+        sys.exit(0)
+
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(1)
+        sys.exit(2)
 
 if __name__ == '__main__':
     cli() 

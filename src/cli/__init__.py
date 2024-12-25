@@ -1,6 +1,5 @@
-"""
-Command-line interface package for the image metadata processor.
-"""
-from .main import main, process_images
+"""Command line interface for image processing"""
 
-__all__ = ['main', 'process_images'] 
+from .main import cli
+
+__all__ = ['cli'] 
