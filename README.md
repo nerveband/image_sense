@@ -4,6 +4,8 @@
 
 An AI-powered image analysis and metadata management tool that uses state-of-the-art machine learning models to analyze images and generate rich, structured metadata.
 
+## CURRENTLY UNSTABLE. USE AT YOUR OWN RISK. 
+
 ## Features
 
 - 🖼️ Advanced image analysis using Google's Gemini Vision API
@@ -11,6 +13,9 @@ An AI-powered image analysis and metadata management tool that uses state-of-the
 - 🔄 Batch processing with smart compression
 - 💾 Multiple output formats (CSV, XML)
 - 🏷️ Automatic EXIF metadata writing
+- 📊 AI-powered filename suggestions
+- 📋 Complete file operation tracking
+- 🔒 Non-destructive processing options
 - 📊 Progress tracking and statistics
 - ⚙️ Highly configurable via environment variables
 
@@ -91,12 +96,18 @@ DEFAULT_MODEL=gemini-2.0-flash-exp
 BACKUP_METADATA=true
 # Write analysis results to image EXIF data
 WRITE_EXIF=true
+# Create duplicate files before modifying
+DUPLICATE_FILES=false
+# Suffix for duplicate files
+DUPLICATE_SUFFIX=_modified
 ```
 
 #### Progress and Logging
 ```env
 # Show progress bars and statistics
 SHOW_PROGRESS=true
+# Show real-time Gemini model responses
+VERBOSE_OUTPUT=false
 # Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 LOG_LEVEL=INFO
 ```
@@ -131,7 +142,7 @@ image_sense bulk-process path/to/directory --api-key YOUR_API_KEY --output-forma
 ### Command Options
 
 #### Generate Metadata (Recommended)
-The `generate-metadata` command analyzes images and creates structured metadata files without modifying the originals:
+The `generate-metadata` command analyzes images and creates structured metadata files:
 ```bash
 image_sense generate-metadata path/to/directory --api-key YOUR_API_KEY [OPTIONS]
 ```
@@ -142,6 +153,8 @@ Key features:
 - Smart compression: Optimized for faster processing
 - Batch processing: Handle multiple images efficiently
 - Incremental updates: Skip already processed files
+- AI-powered filename suggestions
+- Complete file operation tracking
 
 Options:
 - `--output-format, -f`: Choose output format (csv/xml)
@@ -150,14 +163,16 @@ Options:
 - `--batch-size`: Set custom batch size
 - `--no-compress`: Disable image compression
 - `--skip-existing`: Skip files that already have metadata
+- `--duplicate`: Create duplicates before modifying files
+- `--no-backup`: Disable ExifTool backup creation
 
-Example with incremental processing:
+Example with duplicate files:
 ```bash
-# First run - process all images
-image_sense generate-metadata photos/ --api-key YOUR_API_KEY
+# Process images and create duplicates before modification
+image_sense generate-metadata photos/ --api-key YOUR_API_KEY --duplicate
 
-# Later runs - only process new images
-image_sense generate-metadata photos/ --api-key YOUR_API_KEY --skip-existing
+# Process without creating duplicates (modify in place)
+image_sense generate-metadata photos/ --api-key YOUR_API_KEY
 ```
 
 For detailed command documentation, see [Commands Documentation](docs/commands.md).
@@ -166,7 +181,11 @@ For detailed command documentation, see [Commands Documentation](docs/commands.m
 
 ### CSV Format
 The CSV output includes columns for:
-- File path
+- Original file path
+- Original filename
+- New filename (if renamed)
+- Modified file path (if duplicated)
+- Suggested filename
 - Description
 - Keywords
 - Technical details
@@ -177,6 +196,11 @@ The CSV output includes columns for:
 
 ### XML Format
 The XML output provides a structured representation of:
+- File information
+  - Original path and filename
+  - New filename (if renamed)
+  - Modified path (if duplicated)
+  - Suggested filename
 - Image metadata
 - Analysis results
 - Technical information

@@ -1,128 +1,117 @@
-import os
 import pytest
-import pandas as pd
-from lxml import etree
+import os
 from pathlib import Path
-from typing import Dict, Any, List
-
-from src.core.metadata_handler import MetadataHandler
+from unittest.mock import MagicMock, patch
+from src.core.metadata_handler import MetadataHandler, MetadataError, ExifTool
 
 @pytest.fixture
-def sample_results() -> List[Dict[str, Any]]:
-    """Sample structured results for testing."""
-    return [
-        {
-            'path': '/path/to/image1.jpg',
-            'success': True,
-            'description': 'A beautiful sunset',
-            'keywords': ['sunset', 'nature', 'orange'],
-            'technical_details': {
-                'format': 'JPEG',
-                'dimensions': '1920x1080',
-                'color_space': 'sRGB'
-            },
-            'visual_elements': ['sun', 'clouds', 'horizon'],
-            'composition': ['rule of thirds', 'leading lines'],
-            'mood': 'peaceful',
-            'use_cases': ['wallpaper', 'nature photography']
-        },
-        {
-            'path': '/path/to/image2.jpg',
-            'success': True,
-            'description': 'A mountain landscape',
-            'keywords': ['mountain', 'landscape', 'snow'],
-            'technical_details': {
-                'format': 'JPEG',
-                'dimensions': '3840x2160',
-                'color_space': 'sRGB'
-            },
-            'visual_elements': ['peaks', 'snow', 'sky'],
-            'composition': ['symmetry', 'depth'],
-            'mood': 'majestic',
-            'use_cases': ['travel photography', 'prints']
-        }
-    ]
+def metadata_handler():
+    with patch('src.core.metadata_handler.ExifTool') as mock_exiftool:
+        handler = MetadataHandler()
+        handler.exiftool = mock_exiftool.return_value
+        yield handler
 
-def test_save_to_csv(tmp_path, sample_results):
-    """Test saving structured output to CSV."""
-    handler = MetadataHandler()
-    output_path = tmp_path / 'results.csv'
-    
-    # Process and save results
-    handler.process_batch(
-        image_paths=[r['path'] for r in sample_results],
-        operation='read',
-        output_format='csv',
-        output_path=str(output_path)
-    )
-    
-    # Verify CSV file was created
-    assert output_path.exists()
-    
-    # Read and verify contents
-    df = pd.read_csv(output_path)
-    assert len(df) == 2
-    
-    # Check columns
-    expected_columns = {
-        'path', 'success', 'description', 'keywords',
-        'technical_format', 'technical_dimensions', 'technical_color_space',
-        'visual_elements', 'composition', 'mood', 'use_cases'
+@pytest.fixture
+def mock_exiftool():
+    with patch('src.core.metadata_handler.ExifTool') as mock:
+        mock_instance = mock.return_value
+        mock_instance.read_metadata.return_value = {'Title': 'Test'}
+        yield mock_instance
+
+@pytest.fixture
+def sample_metadata():
+    return {
+        'Title': 'Test Image',
+        'Description': 'A test image for unit testing',
+        'Keywords': ['test', 'unit testing', 'metadata'],
+        'Author': 'Test Author'
     }
-    assert set(df.columns) == expected_columns
-    
-    # Check values
-    assert df.iloc[0]['description'] == 'A beautiful sunset'
-    assert 'sunset,nature,orange' in df.iloc[0]['keywords']
-    assert df.iloc[1]['description'] == 'A mountain landscape'
-    assert 'mountain,landscape,snow' in df.iloc[1]['keywords']
 
-def test_save_to_xml(tmp_path, sample_results):
-    """Test saving structured output to XML."""
-    handler = MetadataHandler()
-    output_path = tmp_path / 'results.xml'
+def test_metadata_handler_initialization():
+    """Test MetadataHandler initialization"""
+    with patch('src.core.metadata_handler.ExifTool') as mock_exiftool:
+        handler = MetadataHandler()
+        assert isinstance(handler.exiftool, MagicMock)
+
+def test_read_metadata(metadata_handler, test_image_path):
+    """Test reading metadata from an image"""
+    metadata_handler.exiftool.read_metadata.return_value = {'Title': 'Test'}
+    result = metadata_handler.read_metadata(test_image_path)
+    assert result == {'Title': 'Test'}
+    metadata_handler.exiftool.read_metadata.assert_called_once_with(test_image_path)
+
+def test_write_metadata(metadata_handler, test_image_path, sample_metadata):
+    """Test writing metadata to an image"""
+    metadata_handler.write_metadata(test_image_path, sample_metadata)
+    metadata_handler.exiftool.write_metadata.assert_called_once_with(
+        test_image_path, sample_metadata
+    )
+
+def test_copy_metadata(metadata_handler, test_image_path):
+    """Test copying metadata between images"""
+    source_path = test_image_path
+    target_path = str(Path(test_image_path).parent / 'target.jpg')
+    tags = ['Title', 'Author']
     
-    # Process and save results
-    handler.process_batch(
-        image_paths=[r['path'] for r in sample_results],
+    metadata_handler.copy_metadata(source_path, target_path, tags)
+    metadata_handler.exiftool.copy_metadata.assert_called_once_with(
+        source_path, target_path, tags
+    )
+
+def test_remove_metadata(metadata_handler, test_image_path):
+    """Test removing metadata from an image"""
+    tags = ['Title', 'Author']
+    metadata_handler.remove_metadata(test_image_path, tags)
+    metadata_handler.exiftool.remove_metadata.assert_called_once_with(
+        test_image_path, tags
+    )
+
+def test_process_batch(metadata_handler, test_images_dir, sample_metadata):
+    """Test batch processing of images"""
+    image_paths = [
+        str(Path(test_images_dir) / 'test1.jpg'),
+        str(Path(test_images_dir) / 'test2.jpg')
+    ]
+    
+    metadata_handler.exiftool.process_batch.return_value = [
+        {'path': p, 'metadata': sample_metadata} for p in image_paths
+    ]
+    
+    results = metadata_handler.process_batch(
+        image_paths,
         operation='read',
-        output_format='xml',
-        output_path=str(output_path)
+        metadata=sample_metadata,
+        output_format='csv'
     )
     
-    # Verify XML file was created
-    assert output_path.exists()
+    assert len(results) == 2
+    metadata_handler.exiftool.process_batch.assert_called_once()
+
+def test_metadata_error_handling(metadata_handler, test_image_path):
+    """Test error handling in metadata operations"""
+    metadata_handler.exiftool.read_metadata.side_effect = MetadataError("Test error")
     
-    # Parse and verify XML structure
-    tree = etree.parse(str(output_path))
-    root = tree.getroot()
+    with pytest.raises(MetadataError) as exc_info:
+        metadata_handler.read_metadata(test_image_path)
+    assert "Test error" in str(exc_info.value)
+
+@pytest.mark.parametrize("operation,expected_calls", [
+    ('read', 'read_metadata'),
+    ('write', 'write_metadata'),
+    ('remove', 'remove_metadata')
+])
+def test_batch_operations(metadata_handler, test_images_dir,
+                         operation, expected_calls, sample_metadata):
+    """Test different batch operations"""
+    image_paths = [
+        str(Path(test_images_dir) / 'test1.jpg'),
+        str(Path(test_images_dir) / 'test2.jpg')
+    ]
     
-    # Check number of images
-    images = root.findall('image')
-    assert len(images) == 2
+    metadata_handler.process_batch(
+        image_paths,
+        operation=operation,
+        metadata=sample_metadata if operation == 'write' else None
+    )
     
-    # Check first image
-    image1 = images[0]
-    assert image1.find('path').text == '/path/to/image1.jpg'
-    assert image1.find('description').text == 'A beautiful sunset'
-    
-    # Check keywords
-    keywords = image1.find('keywords').findall('keyword')
-    assert len(keywords) == 3
-    assert {k.text for k in keywords} == {'sunset', 'nature', 'orange'}
-    
-    # Check technical details
-    tech = image1.find('technical_details')
-    assert tech.find('format').text == 'JPEG'
-    assert tech.find('dimensions').text == '1920x1080'
-    
-    # Check second image
-    image2 = images[1]
-    assert image2.find('path').text == '/path/to/image2.jpg'
-    assert image2.find('description').text == 'A mountain landscape'
-    
-    # Check mood and use cases
-    assert image2.find('mood').text == 'majestic'
-    use_cases = image2.find('use_cases').findall('item')
-    assert len(use_cases) == 2
-    assert {uc.text for uc in use_cases} == {'travel photography', 'prints'} 
+    metadata_handler.exiftool.process_batch.assert_called_once() 

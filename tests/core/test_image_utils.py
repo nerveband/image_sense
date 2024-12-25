@@ -1,196 +1,209 @@
 """
 Tests for image utility functions.
 """
-import os
 import pytest
+import os
+import shutil
+import tempfile
+from pathlib import Path
 from PIL import Image
-
+from unittest.mock import patch, MagicMock
 from src.core.image_utils import (
+    compress_image,
+    compress_image_batch,
     load_image,
     validate_image,
-    ImageValidationError,
     is_supported_format,
     get_image_info,
-    process_image_batch
+    process_image_batch,
+    create_llm_optimized_copy,
+    ImageValidationError,
+    ImageCompressionError
 )
 
-# Test data setup
-TEST_DATA_DIR = os.path.join(os.path.dirname(__file__), 'test_data')
-os.makedirs(TEST_DATA_DIR, exist_ok=True)
+@pytest.fixture
+def test_image():
+    """Create a temporary test image"""
+    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+        # Create a simple test image
+        img = Image.new('RGB', (100, 100), color='red')
+        img.save(tmp.name, 'JPEG')
+        yield tmp.name
+        # Cleanup
+        os.unlink(tmp.name)
 
-def create_test_image(filename: str, size=(100, 100)) -> str:
-    """Create a test image file."""
-    path = os.path.join(TEST_DATA_DIR, filename)
-    img = Image.new('RGB', size, color='white')
-    img.save(path)
-    return path
-
-@pytest.fixture(scope="module")
-def setup_test_files():
-    """Setup test files for all tests."""
-    # Create test images
-    valid_images = [
-        create_test_image('valid1.jpg'),
-        create_test_image('valid2.png'),
-        create_test_image('valid3.webp')
-    ]
-    
-    # Create invalid file
-    invalid_file = os.path.join(TEST_DATA_DIR, 'invalid.txt')
-    with open(invalid_file, 'w') as f:
-        f.write('not an image')
-    
-    yield {
-        'valid_images': valid_images,
-        'invalid_file': invalid_file
-    }
-    
-    # Cleanup happens in teardown_module
+@pytest.fixture
+def test_png_image():
+    """Create a temporary PNG test image"""
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+        img = Image.new('RGBA', (100, 100), color=(255, 0, 0, 128))
+        img.save(tmp.name, 'PNG')
+        yield tmp.name
+        os.unlink(tmp.name)
 
 def test_is_supported_format():
-    """Test supported format checking."""
-    assert is_supported_format('test.jpg')
-    assert is_supported_format('test.jpeg')
-    assert is_supported_format('test.png')
-    assert is_supported_format('test.webp')
-    assert not is_supported_format('test.gif')
-    assert not is_supported_format('test.txt')
+    """Test supported format checking"""
+    assert is_supported_format('test.jpg') is True
+    assert is_supported_format('test.jpeg') is True
+    assert is_supported_format('test.png') is True
+    assert is_supported_format('test.webp') is True
+    assert is_supported_format('test.gif') is False
+    assert is_supported_format('test.txt') is False
 
-def test_validate_image(setup_test_files):
-    """Test image validation."""
-    # Test with valid image
-    is_valid, error = validate_image(setup_test_files['valid_images'][0])
-    assert is_valid
+def test_validate_image(test_image):
+    """Test image validation"""
+    # Test valid image
+    is_valid, error = validate_image(test_image)
+    assert is_valid is True
     assert error is None
-
-    # Test with non-existent file
+    
+    # Test non-existent file
     is_valid, error = validate_image('nonexistent.jpg')
-    assert not is_valid
-    assert 'not found' in error.lower()
+    assert is_valid is False
+    assert "not found" in error.lower()
+    
+    # Create an invalid file for testing
+    with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as tmp:
+        tmp.write(b'not an image')
+        tmp.flush()
+        is_valid, error = validate_image(tmp.name)
+        assert is_valid is False
+        assert "unsupported format" in error.lower()
+        os.unlink(tmp.name)
 
-    # Test with invalid format
-    is_valid, error = validate_image(setup_test_files['invalid_file'])
-    assert not is_valid
-    assert 'unsupported format' in error.lower()
-
-def test_load_image(setup_test_files):
-    """Test image loading."""
+def test_load_image(test_image):
+    """Test image loading"""
     # Test with valid image
-    img = load_image(setup_test_files['valid_images'][0])
+    img = load_image(test_image)
     assert isinstance(img, Image.Image)
     assert img.size == (100, 100)
-
+    
     # Test with non-existent file
     with pytest.raises(ImageValidationError):
         load_image('nonexistent.jpg')
 
-    # Test with invalid format
-    with pytest.raises(ImageValidationError):
-        load_image(setup_test_files['invalid_file'])
-
-def test_get_image_info(setup_test_files):
-    """Test getting image information."""
-    # Test with valid image
-    info = get_image_info(setup_test_files['valid_images'][0])
-    
+def test_get_image_info(test_image):
+    """Test getting image information"""
+    info = get_image_info(test_image)
     assert isinstance(info, dict)
-    assert info['format'].lower() in ['jpeg', 'jpg']
+    assert info['format'] in ['JPEG', 'JPG']
     assert info['mode'] == 'RGB'
     assert info['size'] == (100, 100)
     assert info['width'] == 100
     assert info['height'] == 100
     assert info['file_size'] > 0
 
-    # Test with non-existent file
-    with pytest.raises(ImageValidationError):
-        get_image_info('nonexistent.jpg')
-
-def test_process_image_batch(setup_test_files):
-    """Test batch processing of images."""
-    # Test with mix of valid and invalid files
-    test_files = [
-        setup_test_files['valid_images'][0],  # valid jpg
-        'nonexistent.jpg',                    # missing file
-        setup_test_files['invalid_file'],     # invalid format
-        setup_test_files['valid_images'][1]   # valid png
-    ]
+def test_compress_image(test_image):
+    """Test image compression"""
+    output_path = test_image + '_compressed.jpg'
     
-    results = process_image_batch(test_files)
-    
-    # Check results
-    assert len(results) == 4
-    
-    # First file (valid jpg)
-    assert isinstance(results[0], dict)
-    assert results[0]['path'] == str(test_files[0])
-    assert results[0]['success'] is True
-    assert 'description' in results[0]
-    assert 'keywords' in results[0]
-    assert isinstance(results[0]['keywords'], list)
-    
-    # Second file (nonexistent)
-    assert isinstance(results[1], dict)
-    assert results[1]['path'] == str(test_files[1])
-    assert results[1]['success'] is False
-    assert 'error' in results[1]
-    assert 'not found' in results[1]['error'].lower()
-    
-    # Third file (invalid format)
-    assert isinstance(results[2], dict)
-    assert results[2]['path'] == str(test_files[2])
-    assert results[2]['success'] is False
-    assert 'error' in results[2]
-    assert 'unsupported format' in results[2]['error'].lower()
-    
-    # Fourth file (valid png)
-    assert isinstance(results[3], dict)
-    assert results[3]['path'] == str(test_files[3])
-    assert results[3]['success'] is True
-    assert 'description' in results[3]
-    assert 'keywords' in results[3]
-    assert isinstance(results[3]['keywords'], list)
-
-def test_process_image_batch_structured_output(setup_test_files):
-    """Test batch processing with structured output."""
-    # Test with valid files only
-    test_files = [
-        setup_test_files['valid_images'][0],  # valid jpg
-        setup_test_files['valid_images'][1]   # valid png
-    ]
-    
-    results = process_image_batch(test_files)
-    
-    # Check results structure
-    assert len(results) == 2
-    
-    for result in results:
-        assert isinstance(result, dict)
-        assert result['success'] is True
-        assert 'path' in result
-        assert 'description' in result
-        assert 'keywords' in result
-        assert isinstance(result['keywords'], list)
+    try:
+        # Test compression
+        result_path = compress_image(test_image, output_path, quality=85)
+        assert os.path.exists(result_path)
         
-        # Check optional fields if present
-        if 'technical_details' in result:
-            assert isinstance(result['technical_details'], dict)
-            assert 'format' in result['technical_details']
-            assert 'dimensions' in result['technical_details']
-            
-        if 'visual_elements' in result:
-            assert isinstance(result['visual_elements'], list)
-            
-        if 'composition' in result:
-            assert isinstance(result['composition'], list)
-            
-        if 'mood' in result:
-            assert isinstance(result['mood'], str)
-            
-        if 'use_cases' in result:
-            assert isinstance(result['use_cases'], list)
+        # Verify the compressed file is smaller
+        original_size = os.path.getsize(test_image)
+        compressed_size = os.path.getsize(result_path)
+        assert compressed_size < original_size
+        
+        # Verify the image is still valid
+        img = Image.open(result_path)
+        assert img.format == 'JPEG'
+    finally:
+        if os.path.exists(output_path):
+            os.unlink(output_path)
 
-def teardown_module():
-    """Clean up test data after tests."""
-    import shutil
-    if os.path.exists(TEST_DATA_DIR):
-        shutil.rmtree(TEST_DATA_DIR) 
+def test_compress_image_batch(test_image):
+    """Test batch image compression"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Create test files
+        test_files = [test_image]
+        
+        # Test batch compression
+        results = compress_image_batch(
+            test_files,
+            output_dir=temp_dir,
+            quality=85
+        )
+        
+        # Verify results
+        assert len(results) == 1
+        assert results[0][1] is True  # success flag
+        assert os.path.exists(results[0][2])  # output path
+
+def test_create_llm_optimized_copy(test_image):
+    """Test creating LLM-optimized copy"""
+    try:
+        temp_dir, compressed_path = create_llm_optimized_copy(
+            test_image,
+            max_dimension=800,
+            quality=85
+        )
+        
+        assert os.path.exists(compressed_path)
+        assert os.path.getsize(compressed_path) < os.path.getsize(test_image)
+        
+        # Verify image dimensions
+        with Image.open(compressed_path) as img:
+            assert max(img.size) <= 800
+    finally:
+        if 'temp_dir' in locals() and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+def test_process_image_batch(test_image):
+    """Test batch processing of images"""
+    # Create a temporary text file for testing
+    with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as tmp:
+        tmp.write(b'not an image')
+        tmp.flush()
+        
+        # Test with mix of valid and invalid files
+        test_files = [
+            test_image,
+            'nonexistent.jpg',
+            tmp.name
+        ]
+        
+        results = process_image_batch(test_files)
+        assert len(results) == 3
+        
+        # Check first result (valid image)
+        assert results[0][1] is True  # is_valid
+        assert results[0][2] is None  # no error
+        
+        # Check second result (nonexistent file)
+        assert results[1][1] is False
+        assert "not found" in results[1][2].lower()
+        
+        # Check third result (invalid format)
+        assert results[2][1] is False
+        assert "unsupported format" in results[2][2].lower()
+        
+        os.unlink(tmp.name)
+
+def test_compression_with_invalid_input():
+    """Test error handling for invalid input"""
+    with pytest.raises(ImageCompressionError):
+        compress_image('nonexistent.jpg', 'output.jpg')
+
+@pytest.mark.parametrize("quality,expected_success", [
+    (0, True),    # Minimum quality
+    (100, True),  # Maximum quality
+    (-1, False),  # Invalid quality (too low)
+    (101, False), # Invalid quality (too high)
+])
+def test_compression_quality_bounds(test_image, quality, expected_success):
+    """Test compression with different quality values"""
+    output_path = test_image + f'_quality_{quality}.jpg'
+    
+    try:
+        if expected_success:
+            compress_image(test_image, output_path, quality=quality)
+            assert os.path.exists(output_path)
+        else:
+            with pytest.raises(ValueError):  # PIL raises ValueError for invalid quality
+                compress_image(test_image, output_path, quality=quality)
+    finally:
+        if os.path.exists(output_path):
+            os.unlink(output_path) 

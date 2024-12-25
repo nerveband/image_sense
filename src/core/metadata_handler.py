@@ -134,9 +134,7 @@ class ExifTool:
         except json.JSONDecodeError as e:
             raise MetadataError(f"Failed to parse metadata: {str(e)}")
 
-    def write_metadata(self, image_path: Union[str, Path], 
-                      metadata: Dict[str, Any],
-                      backup: bool = True) -> None:
+    def write_metadata(self, image_path: Union[str, Path], metadata: Dict[str, Any], backup: bool = True, duplicate: bool = False) -> Dict[str, Any]:
         """
         Write metadata to an image file.
         
@@ -144,22 +142,72 @@ class ExifTool:
             image_path: Path to the image file
             metadata: Dictionary of metadata to write
             backup: Whether to create a backup of the original file
+            duplicate: Whether to create a duplicate file before modifying
+            
+        Returns:
+            Dict containing the operation results including paths
         """
-        cmd = [self.exiftool_path]
-        if not backup:
-            cmd.append('-overwrite_original')
-
-        # Convert metadata dict to ExifTool arguments
-        for tag, value in metadata.items():
-            if value is not None:
-                cmd.extend([f'-{tag}={value}'])
-
-        cmd.append(str(image_path))
+        image_path = Path(image_path)
+        result = {
+            'original_path': str(image_path),
+            'original_filename': image_path.name,
+            'new_filename': None,
+            'modified_path': None
+        }
 
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            if duplicate:
+                # Create duplicate with _modified suffix before extension
+                stem = image_path.stem
+                suffix = image_path.suffix
+                duplicate_path = image_path.parent / f"{stem}_modified{suffix}"
+                import shutil
+                shutil.copy2(image_path, duplicate_path)
+                image_path = duplicate_path
+                result['modified_path'] = str(duplicate_path)
+
+            cmd = [self.exiftool_path]
+            if not backup:
+                cmd.append('-overwrite_original')
+
+            # Check if rename is requested
+            new_name = metadata.pop('NewFileName', None)
+            if new_name:
+                cmd.extend(['-FileName=' + new_name])
+                result['new_filename'] = new_name
+
+            # Convert metadata dict to ExifTool arguments, properly escaping values
+            for tag, value in metadata.items():
+                if value is not None:
+                    # Skip internal flags
+                    if tag.lower() in ['path', 'success']:
+                        continue
+                    # Handle list values
+                    if isinstance(value, (list, tuple)):
+                        value = ', '.join(str(v) for v in value)
+                    # Escape special characters in the value
+                    value = str(value).replace('"', '\\"')
+                    cmd.extend([f'-{tag}="{value}"'])
+
+            cmd.append(str(image_path))
+
+            result_run = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                shell=False
+            )
+            if result_run.stderr:
+                logger.warning(f"ExifTool warning: {result_run.stderr}")
+
+            return result
+
         except subprocess.CalledProcessError as e:
-            raise MetadataError(f"Failed to write metadata: {str(e)}")
+            error_msg = f"Failed to write metadata: {str(e)}"
+            if e.stderr:
+                error_msg += f"\nExifTool error: {e.stderr}"
+            raise MetadataError(error_msg)
 
     def copy_metadata(self, source_path: Union[str, Path],
                      target_path: Union[str, Path],
@@ -215,7 +263,8 @@ class ExifTool:
                      tags: Optional[List[str]] = None,
                      output_format: str = 'csv',
                      output_path: Optional[str] = None,
-                     backup: bool = True) -> List[Dict[str, Any]]:
+                     backup: bool = True,
+                     duplicate: bool = False) -> List[Dict[str, Any]]:
         """
         Process a batch of images with the same operation and save structured output.
         
@@ -227,6 +276,7 @@ class ExifTool:
             output_format: Format to save results ('csv' or 'xml')
             output_path: Path to save output file
             backup: Whether to create backups (for 'write' and 'remove' operations)
+            duplicate: Whether to create duplicates before modifying
             
         Returns:
             List of results (for 'read' operation) or empty list (for other operations)
@@ -238,9 +288,11 @@ class ExifTool:
             metadata_list = metadata
         else:
             metadata_list = [metadata] * len(image_paths) if metadata else []
-        
+
         for i, path in enumerate(image_paths):
             try:
+                # Convert path to Path object to handle spaces properly
+                path = Path(path)
                 if operation == 'read':
                     result = self.read_metadata(path, tags)
                     results.append(result)
@@ -248,24 +300,52 @@ class ExifTool:
                     # Get metadata for this image
                     img_metadata = metadata_list[i]
                     if img_metadata.get('success', True):  # Only write if successful
+                        # Generate suggested filename if not already present
+                        if 'suggested_filename' not in img_metadata:
+                            img_metadata['suggested_filename'] = self._generate_suggested_filename(
+                                path, img_metadata
+                            )
+                        
                         # Convert structured data to flat metadata
                         exif_metadata = {
                             'Description': img_metadata.get('description', ''),
-                            'Keywords': ', '.join(img_metadata.get('keywords', [])),
-                            'Technical': str(img_metadata.get('technical_details', {})),
-                            'VisualElements': ', '.join(img_metadata.get('visual_elements', [])),
-                            'Composition': ', '.join(img_metadata.get('composition', [])),
+                            'Keywords': img_metadata.get('keywords', []),
+                            'Technical': json.dumps(img_metadata.get('technical_details', {})),
+                            'VisualElements': img_metadata.get('visual_elements', []),
+                            'Composition': img_metadata.get('composition', []),
                             'Mood': img_metadata.get('mood', ''),
-                            'UseCases': ', '.join(img_metadata.get('use_cases', [])),
-                            'Software': 'Image Sense AI Processor'
+                            'UseCases': img_metadata.get('use_cases', []),
+                            'Software': 'Image Sense AI Processor',
+                            'SuggestedFileName': img_metadata['suggested_filename']
                         }
-                        self.write_metadata(path, exif_metadata, backup)
+                        
+                        # Add rename if requested
+                        if 'new_filename' in img_metadata:
+                            exif_metadata['NewFileName'] = img_metadata['new_filename']
+                        
+                        # Write metadata and get operation results
+                        write_result = self.write_metadata(path, exif_metadata, backup, duplicate)
+                        
+                        # Update metadata with file information
+                        img_metadata.update({
+                            'original_path': write_result['original_path'],
+                            'original_filename': write_result['original_filename'],
+                            'new_filename': write_result['new_filename'],
+                            'modified_path': write_result['modified_path']
+                        })
+                        
+                        results.append(img_metadata)
                 elif operation == 'remove':
                     self.remove_metadata(path, tags, backup)
                 logger.info(f"Successfully processed {path}")
             except Exception as e:
                 logger.error(f"Failed to process {path}: {str(e)}")
-                results.append({'error': str(e), 'path': str(path)})
+                results.append({
+                    'error': str(e),
+                    'path': str(path),
+                    'original_filename': path.name,
+                    'success': False
+                })
 
         # Save structured output if path provided
         if output_path and metadata_list:
@@ -276,6 +356,62 @@ class ExifTool:
 
         return results
 
+    def _generate_suggested_filename(self, original_path: Path, metadata: Dict[str, Any]) -> str:
+        """
+        Generate a suggested filename based on image metadata.
+        
+        Args:
+            original_path: Original image path
+            metadata: Image metadata dictionary
+            
+        Returns:
+            Suggested filename with original extension
+        """
+        components = []
+        
+        # Add primary subject or first visual element if available
+        if metadata.get('visual_elements'):
+            components.append(metadata['visual_elements'][0].lower())
+        
+        # Add mood if available
+        if metadata.get('mood'):
+            components.append(metadata['mood'].lower())
+        
+        # Add first composition element if available
+        if metadata.get('composition'):
+            components.append(metadata['composition'][0].lower())
+        
+        # Add first keyword if available and not already included
+        if metadata.get('keywords'):
+            keyword = metadata['keywords'][0].lower()
+            if keyword not in components:
+                components.append(keyword)
+        
+        # If we have no components, use a portion of the description
+        if not components and metadata.get('description'):
+            # Take first few words of description
+            desc_words = metadata['description'].split()[:3]
+            components.extend(word.lower() for word in desc_words)
+        
+        # Clean and join components
+        clean_components = []
+        for component in components:
+            # Remove special characters and spaces
+            clean = ''.join(c for c in component if c.isalnum() or c.isspace())
+            clean = clean.replace(' ', '_')
+            if clean:
+                clean_components.append(clean)
+        
+        # Ensure we have at least one component
+        if not clean_components:
+            clean_components = ['image']
+        
+        # Join components and add original extension
+        suggested_name = '_'.join(clean_components)
+        original_extension = original_path.suffix
+        
+        return f"{suggested_name}{original_extension}"
+
     def _save_to_csv(self, results: List[Dict[str, Any]], output_path: str):
         """Save results to CSV file."""
         import pandas as pd
@@ -284,7 +420,11 @@ class ExifTool:
         flattened_results = []
         for result in results:
             flat_result = {
-                'path': result.get('path', ''),
+                'original_path': result.get('original_path', ''),
+                'original_filename': result.get('original_filename', ''),
+                'new_filename': result.get('new_filename', ''),
+                'modified_path': result.get('modified_path', ''),
+                'suggested_filename': result.get('suggested_filename', ''),
                 'success': result.get('success', False),
                 'description': result.get('description', ''),
                 'keywords': ','.join(result.get('keywords', [])),
@@ -321,9 +461,24 @@ class ExifTool:
         for result in results:
             image = etree.SubElement(root, "image")
             
-            # Add basic fields
-            path = etree.SubElement(image, "path")
-            path.text = str(result.get('path', ''))
+            # Add file information
+            original_path = etree.SubElement(image, "original_path")
+            original_path.text = str(result.get('original_path', ''))
+            
+            original_filename = etree.SubElement(image, "original_filename")
+            original_filename.text = str(result.get('original_filename', ''))
+            
+            if result.get('new_filename'):
+                new_filename = etree.SubElement(image, "new_filename")
+                new_filename.text = result['new_filename']
+            
+            if result.get('modified_path'):
+                modified_path = etree.SubElement(image, "modified_path")
+                modified_path.text = result['modified_path']
+            
+            if 'suggested_filename' in result:
+                suggested_filename = etree.SubElement(image, "suggested_filename")
+                suggested_filename.text = result['suggested_filename']
             
             success = etree.SubElement(image, "success")
             success.text = str(result.get('success', False))
@@ -391,7 +546,7 @@ class MetadataHandler:
         """
         return self.exiftool.read_metadata(image_path, tags)
 
-    def write_metadata(self, image_path: Union[str, Path], metadata: Dict[str, Any], backup: bool = True) -> None:
+    def write_metadata(self, image_path: Union[str, Path], metadata: Dict[str, Any], backup: bool = True, duplicate: bool = False) -> Dict[str, Any]:
         """
         Write metadata to an image file.
         
@@ -399,8 +554,12 @@ class MetadataHandler:
             image_path: Path to the image file
             metadata: Dictionary of metadata to write
             backup: Whether to create a backup of the original file
+            duplicate: Whether to create a duplicate file before modifying
+            
+        Returns:
+            Dict containing the operation results including paths
         """
-        self.exiftool.write_metadata(image_path, metadata, backup)
+        return self.exiftool.write_metadata(image_path, metadata, backup, duplicate)
 
     def copy_metadata(self, source_path: Union[str, Path], target_path: Union[str, Path], 
                      tags: Optional[List[str]] = None) -> None:
@@ -432,7 +591,8 @@ class MetadataHandler:
                      tags: Optional[List[str]] = None,
                      output_format: str = 'csv',
                      output_path: Optional[str] = None,
-                     backup: bool = True) -> List[Dict[str, Any]]:
+                     backup: bool = True,
+                     duplicate: bool = False) -> List[Dict[str, Any]]:
         """
         Process a batch of images with the same operation and save structured output.
         
@@ -444,8 +604,9 @@ class MetadataHandler:
             output_format: Format to save results ('csv' or 'xml')
             output_path: Path to save output file
             backup: Whether to create backups (for 'write' and 'remove' operations)
+            duplicate: Whether to create duplicates before modifying
             
         Returns:
             List of results (for 'read' operation) or empty list (for other operations)
         """
-        return self.exiftool.process_batch(image_paths, operation, metadata, tags, output_format, output_path, backup) 
+        return self.exiftool.process_batch(image_paths, operation, metadata, tags, output_format, output_path, backup, duplicate) 
