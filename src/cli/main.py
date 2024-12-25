@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 import shutil
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
+import google.generativeai as genai
 
 from ..core.image_processor import ImageProcessor
 from ..core.metadata_handler import MetadataHandler
@@ -73,9 +74,9 @@ def process(image_path: str, output_format: str, no_compress: bool):
         click.echo(f"Error: {str(e)}", err=True)
         sys.exit(2)
 
-@cli.command()
+@cli.command(name='bulk-process')
 @click.argument('directory', type=click.Path(exists=True))
-@click.option('--api-key', required=True, help='API key for the image processing service')
+@click.option('--api-key', required=False, help='API key for the image processing service')
 @click.option('--model', default=None, help='Model to use for processing')
 @click.option('--batch-size', type=int, default=None, help='Number of images to process in parallel')
 @click.option('--no-compress', is_flag=True, help='Disable image compression')
@@ -83,16 +84,25 @@ def process(image_path: str, output_format: str, no_compress: bool):
 @click.option('--output-dir', type=click.Path(), default=None, help='Directory to save output files')
 @click.option('--rename-files', is_flag=True, default=None, help='Rename processed files')
 @click.option('--prefix', default=None, help='Prefix for renamed files')
-async def bulk_process(directory, api_key, model, batch_size, no_compress, output_format, output_dir, rename_files, prefix):
-    """Process all images in a directory."""
+def bulk_process_cmd(directory, api_key, model, batch_size, no_compress, output_format, output_dir, rename_files, prefix):
+    """Process multiple images in a directory"""
+    asyncio.run(_bulk_process(directory, api_key, model, batch_size, no_compress, output_format, output_dir, rename_files, prefix))
+
+async def _bulk_process(directory, api_key, model, batch_size, no_compress, output_format, output_dir, rename_files, prefix):
+    """Async implementation of bulk processing"""
     try:
+        # Get API key from argument or environment
+        api_key = api_key or os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            raise click.UsageError("API key must be provided either via --api-key option or GOOGLE_API_KEY environment variable")
+            
         # Initialize processor with configuration values as defaults
         processor = ImageProcessor(
             api_key=api_key,
             model=model,
             rename_files=rename_files,
             prefix=prefix,
-            batch_size=batch_size
+            batch_size=batch_size or config.default_batch_size
         )
         
         # Use configuration values if options not specified
@@ -103,20 +113,93 @@ async def bulk_process(directory, api_key, model, batch_size, no_compress, outpu
         # Create output directory
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        
-        # Process images
-        results = await processor.process_images(directory, compress=compress)
-        
-        # Save results
-        if results:
-            output_file = output_path / f"results.{output_format}"
-            if output_format == 'csv':
-                processor.save_to_csv(results, output_file)
-            else:
-                processor.save_to_xml(results, output_file)
-            click.echo(f"Results saved to {output_file}")
-        
-        click.echo("Processing complete!")
+
+        # Get all images in directory
+        image_files = processor._get_image_files(directory)
+        if not image_files:
+            click.echo("No images found in directory")
+            return
+
+        # Set up progress display
+        console = Console()
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            expand=True
+        ) as progress:
+            # Add tasks for compression and processing
+            compress_task = progress.add_task("[cyan]Compressing images...", total=len(image_files))
+            process_task = progress.add_task("[yellow]Processing images...", total=1, visible=False)
+
+            # First compress all images if needed
+            content_parts = [processor.PROMPT]
+            temp_dirs = []
+            
+            for image_path in image_files:
+                if compress:
+                    temp_dir, compressed_path = processor.create_llm_optimized_copy(str(image_path))
+                    temp_dirs.append(temp_dir)
+                    with open(compressed_path, 'rb') as f:
+                        image_data = f.read()
+                else:
+                    with open(image_path, 'rb') as f:
+                        image_data = f.read()
+                
+                content_parts.append({
+                    'mime_type': 'image/jpeg',
+                    'data': image_data
+                })
+                progress.update(compress_task, advance=1)
+
+            # Update progress for processing phase
+            progress.update(process_task, visible=True)
+            
+            # Process all images in a single batch
+            model = genai.GenerativeModel(model_name=processor.model_name)
+            response = await model.generate_content_async(content_parts, stream=True)
+            
+            current_result = ""
+            async for chunk in response:
+                if chunk.text:
+                    current_result += chunk.text
+            
+            # Parse results
+            results = processor._parse_batch_results(image_files, current_result)
+            
+            # Write EXIF data if enabled
+            if config.write_exif:
+                exif_task = progress.add_task("[green]Writing EXIF data...", total=len(results))
+                metadata_handler = MetadataHandler()
+                for result in results:
+                    if result.get('success', False):
+                        metadata_handler.write_metadata(result['path'], result)
+                        progress.update(exif_task, advance=1)
+
+            # Save results to file
+            if results:
+                output_file = output_path / f"results.{output_format}"
+                if output_format == 'csv':
+                    processor.save_to_csv(results, output_file)
+                else:
+                    processor.save_to_xml(results, output_file)
+                click.echo(f"\nResults saved to {output_file}")
+
+            # Cleanup temporary files
+            for temp_dir in temp_dirs:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+            # Print final statistics
+            success_count = sum(1 for r in results if r.get('success', False))
+            fail_count = len(results) - success_count
+            
+            console.print(f"\n[bold]Processing complete!")
+            console.print(f"Successfully processed: [green]{success_count}[/] images")
+            if fail_count > 0:
+                console.print(f"Failed to process: [red]{fail_count}[/] images")
         
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
