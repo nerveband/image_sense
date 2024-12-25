@@ -21,7 +21,6 @@ class ImageProcessor:
         '1.5-flash-8b': 'gemini-1.5-flash-8b', # High volume, lower intelligence
         '1.5-pro': 'gemini-1.5-pro',           # Complex reasoning
         'pro': 'gemini-1.5-pro',               # Alias for 1.5-pro
-        'claude-haiku': 'claude-haiku',         # Claude Haiku model, up to 100 images
     }
 
     # Prompt template for image analysis
@@ -189,7 +188,6 @@ Please be specific and detailed in your analysis."""
         base_times = {
             '1.5-flash': 1.5,
             '2-flash': 2.0,
-            'claude-haiku': 3.0,
             'default': 4.0
         }
         

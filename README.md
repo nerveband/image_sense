@@ -16,53 +16,97 @@ An AI-powered image analysis and metadata management tool that uses state-of-the
 
 ## Installation
 
-1. Clone the repository:
+1. Ensure you have Python 3.8 or higher installed
+
+2. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/image_sense.git
+git clone https://github.com/nerveband/image_sense.git
 cd image_sense
 ```
 
-2. Install dependencies:
+3. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Copy the example environment file and configure your settings:
+4. Install the package in development mode:
+```bash
+pip install -e .
+```
+
+5. Copy the example environment file and configure your settings:
 ```bash
 cp .env.example .env
 ```
 
-4. Edit `.env` with your API keys and preferences
+6. Edit `.env` with your API keys and preferences
 
 ## Configuration
 
 Image Sense can be configured using environment variables. Create a `.env` file in the project root with the following options:
 
-### Image Processing
-- `COMPRESSION_ENABLED`: Enable image compression (default: true)
-- `COMPRESSION_QUALITY`: JPEG quality for compressed images (default: 85)
-- `MAX_DIMENSION`: Maximum image dimension in pixels (default: 1024)
+### Default Values and Configuration
 
-### Batch Processing
-- `DEFAULT_BATCH_SIZE`: Number of images to process in parallel (default: 8)
-- `MAX_BATCH_SIZE`: Maximum allowed batch size (default: 16)
+Below are the default values used by the application. You can override any of these in your `.env` file:
 
-### Output Configuration
-- `DEFAULT_OUTPUT_FORMAT`: Default output format - 'csv' or 'xml' (default: csv)
-- `OUTPUT_DIRECTORY`: Directory for output files (default: output)
+#### Image Processing
+```env
+# Enable smart compression (recommended for large files)
+COMPRESSION_ENABLED=true
+# JPEG quality (1-100, higher = better quality but larger size)
+COMPRESSION_QUALITY=85
+# Maximum dimension in pixels for processing
+MAX_DIMENSION=1024
+```
 
-### Model Configuration
-- `DEFAULT_MODEL`: Default AI model to use (default: gemini-2.0-flash-exp)
-- `RENAME_FILES`: Automatically rename processed files (default: false)
-- `FILE_PREFIX`: Prefix for renamed files (default: empty)
+#### Batch Processing
+```env
+# Number of images to process in parallel
+DEFAULT_BATCH_SIZE=8
+# Maximum allowed batch size (model-dependent)
+MAX_BATCH_SIZE=16
+```
 
-### Metadata Configuration
-- `BACKUP_METADATA`: Create backups before modifying metadata (default: true)
-- `WRITE_EXIF`: Write analysis results to image EXIF data (default: true)
+#### Output Settings
+```env
+# Default output format (csv or xml)
+DEFAULT_OUTPUT_FORMAT=csv
+# Directory for output files
+OUTPUT_DIRECTORY=output
+```
 
-### Progress and Logging
-- `SHOW_PROGRESS`: Show progress bars and statistics (default: true)
-- `LOG_LEVEL`: Logging level (default: INFO)
+#### Model Settings
+```env
+# Default AI model
+DEFAULT_MODEL=gemini-2.0-flash-exp
+# Available models:
+# - gemini-2.0-flash-exp: Latest experimental model (fastest)
+# - gemini-1.5-flash: Production model (balanced)
+# - gemini-1.5-pro: More detailed analysis (slower)
+```
+
+#### Metadata Settings
+```env
+# Create backups before modifying metadata
+BACKUP_METADATA=true
+# Write analysis results to image EXIF data
+WRITE_EXIF=true
+```
+
+#### Progress and Logging
+```env
+# Show progress bars and statistics
+SHOW_PROGRESS=true
+# Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+LOG_LEVEL=INFO
+```
+
+## API Keys
+
+You'll need a Google API key with Gemini Vision API access enabled:
+1. Get it from: https://aistudio.google.com/app/apikey
+2. Add it to your `.env` file as `GOOGLE_API_KEY=your-key-here`
+3. Or pass it directly using the `--api-key` parameter
 
 ## Usage
 
@@ -73,7 +117,7 @@ image_sense process path/to/image.jpg
 
 ### Process a Directory of Images
 ```bash
-image_sense bulk-process path/to/directory --output-format xml
+image_sense bulk-process path/to/directory --api-key YOUR_API_KEY --output-format xml
 ```
 
 ### Options
