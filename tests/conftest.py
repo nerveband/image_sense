@@ -25,7 +25,7 @@ def setup_test_env():
 @pytest.fixture
 def test_image_path():
     """Get path to test image"""
-    return str(Path(__file__).parent / 'test_images' / 'test_image.jpg')
+    return str(Path(__file__).parent / 'test_images' / 'test.jpg')
 
 @pytest.fixture
 def test_images_dir():
