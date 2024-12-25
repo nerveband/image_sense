@@ -509,3 +509,53 @@ Please be specific and detailed in your analysis."""
             image_files.extend(folder.glob(f'*{ext.upper()}'))
         
         return sorted(image_files)  # Sort for consistent ordering 
+
+    def _parse_batch_results(self, batch: List[Path], result_text: str) -> List[dict]:
+        """Parse batch results from streaming response."""
+        results = []
+        
+        # Split response into sections for each image
+        sections = result_text.split('\n\n')
+        
+        for image_path, section in zip(batch, sections):
+            try:
+                # Parse individual result
+                result = {
+                    'path': str(image_path),
+                    'success': True
+                }
+                
+                # Extract sections
+                lines = section.split('\n')
+                for line in lines:
+                    if line.startswith('Description:'):
+                        result['description'] = line.replace('Description:', '').strip()
+                    elif line.startswith('Keywords:'):
+                        result['keywords'] = [k.strip() for k in line.replace('Keywords:', '').split(',')]
+                    elif line.startswith('Technical Details:'):
+                        result['technical_details'] = {}
+                        tech_details = line.replace('Technical Details:', '').strip()
+                        for detail in tech_details.split(','):
+                            if ':' in detail:
+                                key, value = detail.split(':', 1)
+                                result['technical_details'][key.strip().lower()] = value.strip()
+                    elif line.startswith('Visual Elements:'):
+                        result['visual_elements'] = [e.strip() for e in line.replace('Visual Elements:', '').split(',')]
+                    elif line.startswith('Composition:'):
+                        result['composition'] = [c.strip() for c in line.replace('Composition:', '').split(',')]
+                    elif line.startswith('Mood:'):
+                        result['mood'] = line.replace('Mood:', '').strip()
+                    elif line.startswith('Use Cases:'):
+                        result['use_cases'] = [u.strip() for u in line.replace('Use Cases:', '').split(',')]
+                
+                results.append(result)
+                
+            except Exception as e:
+                logging.error(f"Error parsing result for {image_path}: {str(e)}")
+                results.append({
+                    'path': str(image_path),
+                    'success': False,
+                    'error': str(e)
+                })
+        
+        return results 

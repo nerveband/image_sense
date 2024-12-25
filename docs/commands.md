@@ -158,4 +158,37 @@ The XML file provides a structured representation with the following hierarchy:
 - **Model Selection**: Different models offer different trade-offs:
   - `gemini-2.0-flash-exp`: Fastest, good for large batches
   - `gemini-1.5-flash`: Balanced speed and accuracy
-  - `gemini-1.5-pro`: Most detailed analysis but slower 
+  - `gemini-1.5-pro`: Most detailed analysis but slower
+
+#### Real-time Progress and Streaming
+
+The command provides detailed real-time progress information:
+
+- Overall Progress Bar:
+  - Shows total progress across all images
+  - Displays estimated time remaining
+  - Shows processing speed
+
+- Batch Progress:
+  - Shows current batch being processed
+  - Displays streaming updates as results are generated
+  - Indicates batch number and size
+
+- Status Updates:
+  - Number of files skipped (with `--skip-existing`)
+  - Success/failure counts
+  - Error messages for failed images
+  - Final statistics summary
+
+Example output:
+```
+Processing 100 images...  [######################]  100%  10.2 imgs/s  ETA: 0:00
+Batch 3/5...            [############--------]   60%  2.1 s remaining
+```
+
+The streaming functionality provides several benefits:
+- See results as they're generated
+- Early feedback on processing status
+- Better progress tracking
+- Immediate error reporting
+- More responsive user experience 

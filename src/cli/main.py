@@ -11,6 +11,9 @@ from typing import Optional
 import logging
 import pandas as pd
 import xml.etree.ElementTree as ET
+import shutil
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
 
 from ..core.image_processor import ImageProcessor
 from ..core.metadata_handler import MetadataHandler
@@ -167,11 +170,7 @@ async def generate_metadata(directory: str, api_key: str, output_format: str, ou
             except Exception as e:
                 logging.warning(f"Error reading existing metadata file: {str(e)}")
         
-        # Process images
-        click.echo(f"Processing images in {directory}...")
-        compress = not no_compress if no_compress is not None else config.compression_enabled
-        
-        # Filter out existing entries if skip_existing is enabled
+        # Get list of images to process
         image_files = processor._get_image_files(directory)
         if skip_existing:
             original_count = len(image_files)
@@ -180,33 +179,130 @@ async def generate_metadata(directory: str, api_key: str, output_format: str, ou
             if skipped_count > 0:
                 click.echo(f"Skipping {skipped_count} files that already have metadata")
         
-        results = await processor.process_images(directory, compress=compress, files=image_files)
+        if not image_files:
+            click.echo("No new images to process")
+            return
         
-        # Save results
-        if results:
-            if output_format == 'csv':
-                if skip_existing and output_path.exists():
-                    # Append to existing CSV
-                    existing_df = pd.read_csv(output_path)
-                    new_df = pd.DataFrame(results)
-                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-                    combined_df.to_csv(output_path, index=False)
-                else:
-                    processor.save_to_csv(results, output_path)
-            else:
-                if skip_existing and output_path.exists():
-                    # Merge with existing XML
-                    tree = ET.parse(output_path)
-                    root = tree.getroot()
-                    processor.append_to_xml(results, root)
-                    tree.write(output_path)
-                else:
-                    processor.save_to_xml(results, output_path)
-            click.echo(f"Metadata saved to {output_path}")
-        else:
-            click.echo("No new images were processed")
+        # Set up progress display
+        console = Console()
         
-        click.echo("Processing complete!")
+        # Main progress for overall processing
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            TransferSpeedColumn(),
+            console=console,
+            expand=True
+        ) as progress:
+            # Add main task for overall progress
+            main_task = progress.add_task(
+                f"[cyan]Processing {len(image_files)} images...",
+                total=len(image_files)
+            )
+            
+            # Add subtask for current batch
+            batch_task = progress.add_task(
+                "[yellow]Current batch...",
+                total=processor.batch_size,
+                visible=False
+            )
+            
+            # Process images with streaming updates
+            results = []
+            batches = [image_files[i:i + processor.batch_size] for i in range(0, len(image_files), processor.batch_size)]
+            
+            for batch_num, batch in enumerate(batches, 1):
+                # Update batch progress
+                progress.update(batch_task, completed=0, total=len(batch), visible=True,
+                              description=f"[yellow]Batch {batch_num}/{len(batches)}...")
+                
+                # Process batch with streaming
+                model = genai.GenerativeModel(model_name=processor.model_name)
+                content_parts = [processor.PROMPT]
+                
+                # Prepare batch images
+                for image_path in batch:
+                    if no_compress:
+                        with open(image_path, 'rb') as f:
+                            image_data = f.read()
+                    else:
+                        temp_dir, compressed_path = processor.create_llm_optimized_copy(str(image_path))
+                        with open(compressed_path, 'rb') as f:
+                            image_data = f.read()
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                    
+                    content_parts.append({
+                        'mime_type': 'image/jpeg',
+                        'data': image_data
+                    })
+                
+                # Stream response
+                response = await model.generate_content_async(content_parts, stream=True)
+                current_result = ""
+                
+                try:
+                    async for chunk in response:
+                        if chunk.text:
+                            current_result += chunk.text
+                            # Update progress
+                            progress.update(batch_task, advance=1)
+                            
+                    # Parse results and add to collection
+                    batch_results = processor._parse_batch_results(batch, current_result)
+                    results.extend(batch_results)
+                    
+                    # Update main progress
+                    progress.update(main_task, advance=len(batch))
+                    
+                except Exception as e:
+                    console.print(f"[red]Error processing batch: {str(e)}")
+                    # Mark failed images
+                    for image_path in batch:
+                        results.append({
+                            'path': str(image_path),
+                            'success': False,
+                            'error': str(e)
+                        })
+                    progress.update(main_task, advance=len(batch))
+                
+                finally:
+                    # Hide batch progress after completion
+                    progress.update(batch_task, visible=False)
+            
+            # Save results
+            if results:
+                if output_format == 'csv':
+                    if skip_existing and output_path.exists():
+                        # Append to existing CSV
+                        existing_df = pd.read_csv(output_path)
+                        new_df = pd.DataFrame(results)
+                        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                        combined_df.to_csv(output_path, index=False)
+                    else:
+                        processor.save_to_csv(results, output_path)
+                else:
+                    if skip_existing and output_path.exists():
+                        # Merge with existing XML
+                        tree = ET.parse(output_path)
+                        root = tree.getroot()
+                        processor.append_to_xml(results, root)
+                        tree.write(output_path)
+                    else:
+                        processor.save_to_xml(results, output_path)
+                
+                console.print(f"\n[green]Metadata saved to {output_path}")
+            
+            # Print final statistics
+            success_count = sum(1 for r in results if r.get('success', False))
+            fail_count = len(results) - success_count
+            
+            console.print(f"\n[bold]Processing complete!")
+            console.print(f"Successfully processed: [green]{success_count}[/] images")
+            if fail_count > 0:
+                console.print(f"Failed to process: [red]{fail_count}[/] images")
         
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
