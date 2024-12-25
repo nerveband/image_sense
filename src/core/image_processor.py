@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
 from ..core.image_utils import compress_image
 from ..core.llm_handler import get_provider
+from ..core.config import config
 
 class ImageProcessor:
     # Available models based on latest documentation
@@ -36,20 +37,21 @@ Use Cases: Potential applications or use cases for this image
 
 Please be specific and detailed in your analysis."""
 
-    def __init__(self, api_key: str, model: str = 'gemini-2.0-flash-exp', rename_files: bool = False, prefix: str = None, batch_size: int = 1, progress_callback=None):
+    def __init__(self, api_key: str, model: str = None, rename_files: bool = None, prefix: str = None, batch_size: int = None, progress_callback=None):
         """Initialize the image processor."""
         self.api_key = api_key
-        self.model = model
-        self.model_name = model
-        self.rename_files = rename_files
-        self.prefix = prefix
-        self.provider = get_provider(api_key, model=model)
+        self.model = model or config.default_model
+        self.model_name = self.model
+        self.rename_files = rename_files if rename_files is not None else config.rename_files
+        self.prefix = prefix or config.file_prefix
+        self.provider = get_provider(api_key, model=self.model)
         
         # Set model-specific batch size limits
+        default_batch_size = batch_size or config.default_batch_size
         if model in ['gemini-2.0-flash-exp', 'gemini-1.5-flash']:
-            self.batch_size = min(batch_size, 8)  # Conservative limit for experimental models
+            self.batch_size = min(default_batch_size, config.max_batch_size)
         else:
-            self.batch_size = 1  # Process one at a time for other models
+            self.batch_size = 1
         
         # Processing statistics
         self.stats = {
@@ -78,8 +80,11 @@ Please be specific and detailed in your analysis."""
         # Initialize console
         self.console = Console()
 
-    def create_llm_optimized_copy(self, file_path: str, max_dimension: int = 1024, quality: int = 85) -> tuple[str, str]:
+    def create_llm_optimized_copy(self, file_path: str, max_dimension: int = None, quality: int = None) -> tuple[str, str]:
         """Creates a temporary compressed copy of an image optimized for LLM processing."""
+        max_dimension = max_dimension or config.max_dimension
+        quality = quality or config.compression_quality
+        
         try:
             # Create temporary directory
             temp_dir = tempfile.mkdtemp(prefix='llm_image_')
@@ -205,8 +210,11 @@ Please be specific and detailed in your analysis."""
             return f"{hours}h {minutes}m"
         return f"{minutes}m"
 
-    async def process_images(self, folder_path: str, compress: bool = False) -> List[Dict[str, Any]]:
+    async def process_images(self, folder_path: str, compress: bool = None) -> List[Dict[str, Any]]:
         """Process all images in the given folder."""
+        # Use configuration value if compress is not specified
+        compress = compress if compress is not None else config.compression_enabled
+        
         all_results = []
         try:
             # Start timing

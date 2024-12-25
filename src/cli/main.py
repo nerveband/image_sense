@@ -8,10 +8,12 @@ import click
 import asyncio
 from pathlib import Path
 from typing import Optional
+import logging
 
 from ..core.image_processor import ImageProcessor
 from ..core.metadata_handler import MetadataHandler
 from ..core.output_handler import save_metadata
+from ..core.config import config
 
 # Available models
 AVAILABLE_MODELS = {
@@ -28,8 +30,9 @@ def get_model_from_env() -> str:
 
 @click.group()
 def cli():
-    """Image Sense - AI-powered image metadata processor"""
-    pass
+    """Image Sense CLI for processing and analyzing images."""
+    # Set up logging based on configuration
+    logging.basicConfig(level=getattr(logging, config.log_level.upper()))
 
 @cli.command()
 @click.argument('image_path', type=click.Path(exists=True))
@@ -67,60 +70,52 @@ def process(image_path: str, output_format: str, no_compress: bool):
 
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True))
-@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
-              help='Output format for metadata (csv or xml)')
-@click.option('--recursive', '-r', is_flag=True, help='Process directories recursively')
-@click.option('--no-compress', is_flag=True, help='Disable image compression (not recommended for large files)')
-@click.option('--model', '-m', type=click.Choice(list(AVAILABLE_MODELS.keys())), 
-              help='Gemini model to use (default: from env or flash-exp)')
-@click.option('--batch-size', '-b', type=int, default=1, 
-              help='Number of images to process in one API call (default: 1)')
-@click.option('--output-dir', '-o', type=click.Path(), default='metadata',
-              help='Output directory for metadata files (default: metadata)')
-def bulk_process(directory: str, output_format: str, recursive: bool, no_compress: bool, model: str, batch_size: int, output_dir: str):
-    """Process all images in a directory"""
+@click.option('--api-key', required=True, help='API key for the image processing service')
+@click.option('--model', default=None, help='Model to use for processing')
+@click.option('--batch-size', type=int, default=None, help='Number of images to process in parallel')
+@click.option('--no-compress', is_flag=True, help='Disable image compression')
+@click.option('--output-format', type=click.Choice(['csv', 'xml']), default=None, help='Output format for results')
+@click.option('--output-dir', type=click.Path(), default=None, help='Directory to save output files')
+@click.option('--rename-files', is_flag=True, default=None, help='Rename processed files')
+@click.option('--prefix', default=None, help='Prefix for renamed files')
+async def bulk_process(directory, api_key, model, batch_size, no_compress, output_format, output_dir, rename_files, prefix):
+    """Process all images in a directory."""
     try:
-        # Get API key from environment
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            click.echo("Error: GOOGLE_API_KEY environment variable not set", err=True)
-            sys.exit(1)
-
-        # Get model name
-        model_name = AVAILABLE_MODELS[model] if model else get_model_from_env()
-        click.echo(f"Using model: {model_name}")
-
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Initialize image processor with selected model and batch size
-        processor = ImageProcessor(api_key=api_key, model=model_name, batch_size=batch_size)
-
-        # Process images with compression enabled by default
-        results = asyncio.run(processor.process_images(directory, compress=not no_compress))
-
-        # Save results
-        if output_format == 'xml':
-            output_path = os.path.join(output_dir, 'analysis_results.xml')
-        else:
-            output_path = os.path.join(output_dir, 'analysis_results.csv')
-
-        # Save metadata using metadata handler
-        handler = MetadataHandler()
-        handler.process_batch(
-            image_paths=[r['path'] for r in results] if results else [],
-            operation='write',
-            metadata=results,
-            output_format=output_format,
-            output_path=output_path
+        # Initialize processor with configuration values as defaults
+        processor = ImageProcessor(
+            api_key=api_key,
+            model=model,
+            rename_files=rename_files,
+            prefix=prefix,
+            batch_size=batch_size
         )
-
-        click.echo(f"Results saved to: {output_path}")
-        sys.exit(0)
-
+        
+        # Use configuration values if options not specified
+        output_format = output_format or config.default_output_format
+        output_dir = output_dir or config.output_directory
+        compress = not no_compress if no_compress is not None else config.compression_enabled
+        
+        # Create output directory
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Process images
+        results = await processor.process_images(directory, compress=compress)
+        
+        # Save results
+        if results:
+            output_file = output_path / f"results.{output_format}"
+            if output_format == 'csv':
+                processor.save_to_csv(results, output_file)
+            else:
+                processor.save_to_xml(results, output_file)
+            click.echo(f"Results saved to {output_file}")
+        
+        click.echo("Processing complete!")
+        
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
-        sys.exit(2)
+        raise click.Abort()
 
 if __name__ == '__main__':
     cli() 
