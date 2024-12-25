@@ -1,3 +1,17 @@
+from typing import List, Dict, Any, Optional, Union
+from pathlib import Path
+import os
+import time
+import logging
+import shutil
+import tempfile
+import re
+import google.generativeai as genai
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
+from ..core.image_utils import compress_image
+from ..core.llm_handler import get_provider
+
 class ImageProcessor:
     # Available models based on latest documentation
     AVAILABLE_MODELS = {
@@ -9,20 +23,33 @@ class ImageProcessor:
         'claude-haiku': 'claude-haiku',         # Claude Haiku model, up to 100 images
     }
 
-    def __init__(self, api_key: str, model: str = '1.5-pro', rename_files: bool = False, prefix: str = None, batch_size: int = 100, progress_callback=None):
+    # Prompt template for image analysis
+    PROMPT = """Analyze this image and provide a detailed description with the following structure:
+
+Description: A clear, concise description of the main subject and scene.
+Keywords: Relevant keywords and tags, comma-separated
+Technical Details: Image format, dimensions, and color space
+Visual Elements: List of key visual elements present
+Composition: Notable composition techniques used
+Mood: Overall mood or atmosphere
+Use Cases: Potential applications or use cases for this image
+
+Please be specific and detailed in your analysis."""
+
+    def __init__(self, api_key: str, model: str = 'gemini-2.0-flash-exp', rename_files: bool = False, prefix: str = None, batch_size: int = 1, progress_callback=None):
         """Initialize the image processor."""
         self.api_key = api_key
         self.model = model
+        self.model_name = model
         self.rename_files = rename_files
         self.prefix = prefix
+        self.provider = get_provider(api_key, model=model)
         
         # Set model-specific batch size limits
-        if model in ['1.5-flash', '2-flash']:
-            self.batch_size = min(batch_size, 3000)
-        elif model == 'claude-haiku':
-            self.batch_size = min(batch_size, 100)
+        if model in ['gemini-2.0-flash-exp', 'gemini-1.5-flash']:
+            self.batch_size = min(batch_size, 8)  # Conservative limit for experimental models
         else:
-            self.batch_size = min(batch_size, 50)  # Default conservative limit
+            self.batch_size = 1  # Process one at a time for other models
         
         # Processing statistics
         self.stats = {
@@ -51,6 +78,106 @@ class ImageProcessor:
         # Initialize console
         self.console = Console()
 
+    def create_llm_optimized_copy(self, file_path: str, max_dimension: int = 1024, quality: int = 85) -> tuple[str, str]:
+        """Creates a temporary compressed copy of an image optimized for LLM processing."""
+        try:
+            # Create temporary directory
+            temp_dir = tempfile.mkdtemp(prefix='llm_image_')
+            
+            # Create compressed copy
+            filename = os.path.basename(file_path)
+            base, _ = os.path.splitext(filename)
+            compressed_path = os.path.join(temp_dir, f"{base}_compressed.jpg")
+            
+            compress_image(
+                file_path,
+                compressed_path,
+                max_dimension=max_dimension,
+                quality=quality,
+                optimize=True
+            )
+            
+            return temp_dir, compressed_path
+            
+        except Exception as e:
+            # Clean up on error
+            if 'temp_dir' in locals():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise Exception(f"Failed to create LLM-optimized copy: {str(e)}")
+
+    def analyze_image(self, image_path: str) -> str:
+        """Analyze an image using the configured provider."""
+        return self.provider.analyze_image(image_path)
+
+    def analyze_batch(self, image_paths: List[str]) -> List[Dict[str, Any]]:
+        """Analyze a batch of images using the configured provider.
+        
+        Args:
+            image_paths: List of paths to images to analyze
+            
+        Returns:
+            List of dictionaries containing analysis results for each image
+        """
+        if len(image_paths) > self.batch_size:
+            # Split into smaller batches if needed
+            results = []
+            for i in range(0, len(image_paths), self.batch_size):
+                batch = image_paths[i:i + self.batch_size]
+                results.extend(self.provider.analyze_batch(batch))
+            return results
+
+        # Process single batch with structured output
+        try:
+            # Prepare batch request with structured output schema
+            schema = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "description": {"type": "string"},
+                        "keywords": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "technical_details": {
+                            "type": "object",
+                            "properties": {
+                                "format": {"type": "string"},
+                                "dimensions": {"type": "string"},
+                                "color_space": {"type": "string"}
+                            }
+                        },
+                        "visual_elements": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "composition": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "mood": {"type": "string"},
+                        "use_cases": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["path", "description", "keywords"]
+                }
+            }
+
+            # Process batch with structured output
+            return self.provider.analyze_batch(image_paths, schema=schema)
+            
+        except Exception as e:
+            logging.error(f"Error processing batch: {str(e)}")
+            # Return error results for each image in batch
+            return [{
+                'path': path,
+                'success': False,
+                'error': str(e)
+            } for path in image_paths]
+
     def estimate_processing_time(self, total_images: int, compressed: bool = False) -> str:
         """Estimate total processing time based on batch size and model."""
         # Base time estimates (in seconds per image)
@@ -78,8 +205,9 @@ class ImageProcessor:
             return f"{hours}h {minutes}m"
         return f"{minutes}m"
 
-    async def process_images(self, folder_path: str, compress: bool = False):
+    async def process_images(self, folder_path: str, compress: bool = False) -> List[Dict[str, Any]]:
         """Process all images in the given folder."""
+        all_results = []
         try:
             # Start timing
             self.stats['start_time'] = time.time()
@@ -91,7 +219,7 @@ class ImageProcessor:
             
             if not image_files:
                 logging.warning("No image files found in the specified folder")
-                return
+                return []
             
             # Calculate and display time estimate
             estimated_time = self.estimate_processing_time(len(image_files), compress)
@@ -129,6 +257,7 @@ class ImageProcessor:
                         progress=progress,
                         task=main_task
                     )
+                    all_results.extend(batch_results)
                     
                     # Update statistics
                     batch_time = time.time() - batch_start_time
@@ -169,6 +298,8 @@ class ImageProcessor:
                 logging.info(f"Compression ratio: {compression_ratio:.2f}x")
                 logging.info(f"Estimated time saved: {time_saved:.2f}s")
             
+            return all_results
+            
         except Exception as e:
             logging.error(f"Error processing images: {str(e)}")
             raise
@@ -199,7 +330,7 @@ class ImageProcessor:
                     if compress:
                         # Create compressed copy for processing
                         original_size = os.path.getsize(image_path)
-                        temp_dir, compressed_path = create_llm_optimized_copy(
+                        temp_dir, compressed_path = self.create_llm_optimized_copy(
                             str(image_path),
                             max_dimension=1024,  # Optimal for most models
                             quality=85
@@ -214,17 +345,24 @@ class ImageProcessor:
                         # Read compressed image
                         with open(compressed_path, 'rb') as f:
                             image_data = f.read()
+                            image_data_list.append(image_data)
                         
                         original_sizes.append(original_size)
                         compressed_paths.append((temp_dir, compressed_path))
+                        
+                        # Clean up immediately after reading
+                        try:
+                            os.remove(compressed_path)
+                            os.rmdir(temp_dir)
+                        except Exception as e:
+                            logging.warning(f"Error cleaning up temporary files: {str(e)}")
                         
                     else:
                         # Read original image
                         with open(image_path, 'rb') as f:
                             image_data = f.read()
+                            image_data_list.append(image_data)
                         compressed_paths.append((None, None))
-                    
-                    image_data_list.append(image_data)
                     
                 except Exception as e:
                     logging.error(f"Error preparing image {image_path}: {str(e)}")
@@ -262,33 +400,36 @@ class ImageProcessor:
                 for i, (image_path, result_text) in enumerate(zip(batch, batch_results)):
                     try:
                         # Parse individual result
-                        description_match = re.search(r'Description: (.*?)(?:\n|$)', result_text)
-                        keywords_match = re.search(r'Keywords: (.*?)(?:\n|$)', result_text)
-                        
-                        if not description_match or not keywords_match:
-                            raise ValueError(f"Unexpected response format: {result_text}")
-                        
-                        description = description_match.group(1).strip()
-                        keywords = [k.strip() for k in keywords_match.group(1).split(',')]
-                        
-                        # Write metadata
-                        metadata_dict = {
-                            'Description': description,
-                            'Keywords': ', '.join(keywords),
-                            'Software': 'AI-Powered Image Metadata Processor v2.0'
+                        result = {
+                            'path': str(image_path),
+                            'success': True
                         }
                         
-                        if not self._write_metadata(str(image_path), metadata_dict):
-                            raise ValueError("Failed to write metadata")
+                        # Extract sections
+                        sections = result_text.split('\n')
+                        for section in sections:
+                            if section.startswith('Description:'):
+                                result['description'] = section.replace('Description:', '').strip()
+                            elif section.startswith('Keywords:'):
+                                result['keywords'] = [k.strip() for k in section.replace('Keywords:', '').split(',')]
+                            elif section.startswith('Technical Details:'):
+                                result['technical_details'] = {}
+                                tech_details = section.replace('Technical Details:', '').strip()
+                                for detail in tech_details.split(','):
+                                    if ':' in detail:
+                                        key, value = detail.split(':', 1)
+                                        result['technical_details'][key.strip().lower()] = value.strip()
+                            elif section.startswith('Visual Elements:'):
+                                result['visual_elements'] = [e.strip() for e in section.replace('Visual Elements:', '').split(',')]
+                            elif section.startswith('Composition:'):
+                                result['composition'] = [c.strip() for c in section.replace('Composition:', '').split(',')]
+                            elif section.startswith('Mood:'):
+                                result['mood'] = section.replace('Mood:', '').strip()
+                            elif section.startswith('Use Cases:'):
+                                result['use_cases'] = [u.strip() for u in section.replace('Use Cases:', '').split(',')]
                         
                         # Update results
-                        results.append({
-                            'path': str(image_path),
-                            'success': True,
-                            'description': description,
-                            'keywords': keywords
-                        })
-                        
+                        results.append(result)
                         self.stats['processed'] += 1
                         
                     except Exception as e:
@@ -314,10 +455,13 @@ class ImageProcessor:
                 
                 # Update timing statistics
                 batch_time = time.time() - batch_start
-                if compress:
-                    # Estimate time saved by compression
-                    uncompressed_ratio = sum(original_sizes) / sum(os.path.getsize(p[1]) for p in compressed_paths if p[1])
-                    self.stats['compression_stats']['time_saved'] += (batch_time * (uncompressed_ratio - 1))
+                if compress and original_sizes:
+                    # Calculate compression ratio from the original sizes we collected
+                    total_original = sum(original_sizes)
+                    total_compressed = sum(os.path.getsize(p[1]) for p in compressed_paths if p[1] and os.path.exists(p[1]))
+                    if total_compressed > 0:  # Avoid division by zero
+                        compression_ratio = total_original / total_compressed
+                        self.stats['compression_stats']['time_saved'] += (batch_time * (compression_ratio - 1))
                 
             except Exception as e:
                 logging.error(f"Error processing batch: {str(e)}")
@@ -344,3 +488,18 @@ class ImageProcessor:
             raise
         
         return results 
+
+    def _get_image_files(self, folder_path: str) -> List[Path]:
+        """Get list of image files from folder."""
+        folder = Path(folder_path)
+        image_files = []
+        
+        # Supported image extensions
+        extensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']
+        
+        # Find all image files
+        for ext in extensions:
+            image_files.extend(folder.glob(f'*{ext}'))
+            image_files.extend(folder.glob(f'*{ext.upper()}'))
+        
+        return sorted(image_files)  # Sort for consistent ordering 

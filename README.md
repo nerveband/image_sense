@@ -12,7 +12,10 @@ A powerful command-line tool for generating intelligent image metadata using Goo
 - Support for single image and bulk processing
 - Multiple output formats (CSV, XML)
 - Recursive directory processing
+- Smart image compression (enabled by default)
+- Efficient batch processing with configurable batch sizes
 - Progress tracking for bulk operations
+- Structured output with rich metadata
 
 ## Installation
 
@@ -46,6 +49,7 @@ image_sense process IMAGE_PATH [OPTIONS]
 
 Options:
 - `-f, --output-format [csv|xml]`: Output format for metadata (default: csv)
+- `--no-compress`: Disable smart image compression (not recommended for large files)
 
 Example:
 ```bash
@@ -61,10 +65,13 @@ image_sense bulk-process DIRECTORY [OPTIONS]
 Options:
 - `-f, --output-format [csv|xml]`: Output format for metadata (default: csv)
 - `-r, --recursive`: Process directories recursively
+- `--no-compress`: Disable smart image compression (not recommended)
+- `-b, --batch-size N`: Number of images to process in one batch (default: 1)
+- `-m, --model MODEL`: Specify Gemini model to use
 
 Example:
 ```bash
-image_sense bulk-process path/to/directory --output-format csv --recursive
+image_sense bulk-process path/to/directory --output-format csv --recursive --batch-size 4
 ```
 
 ## Output Formats
@@ -78,15 +85,32 @@ The CSV output includes:
 - Colors and composition
 - Mood/atmosphere
 - Potential use cases
+- Keywords
 
 ### XML Format
-The XML output provides the same information in a structured XML format with tags for each metadata category.
+The XML output provides the same information in a structured XML format with tags for each metadata category, including:
+- Basic image information
+- Technical details
+- Visual elements
+- Composition analysis
+- Keywords and tags
+- Mood and atmosphere
+- Use cases
+
+## Smart Compression
+
+By default, the tool uses smart image compression to optimize processing:
+- Automatically compresses large images (>10MB)
+- Maintains visual quality while reducing processing time
+- Can be disabled with `--no-compress` flag
+- Typically provides 2-5x speedup for large images
 
 ## Requirements
 
 - Python 3.8 or higher
 - Google API key with Gemini Vision API access
 - Supported image formats: JPG, JPEG, PNG, WebP
+- ExifTool (bundled with the application)
 
 ## Development
 

@@ -5,27 +5,39 @@ Command-line interface for image processing
 import os
 import sys
 import click
+import asyncio
 from pathlib import Path
-from typing import List
+from typing import Optional
 
-from ..core.llm_handler import get_provider
+from ..core.image_processor import ImageProcessor
+from ..core.metadata_handler import MetadataHandler
 from ..core.output_handler import save_metadata
-from ..core.image_utils import validate_image_path
-from ..core.settings_manager import Settings
 
-settings = Settings()
+# Available models
+AVAILABLE_MODELS = {
+    '2-flash': 'gemini-2.0-flash-exp',     # Experimental next-gen features
+    '1.5-flash': 'gemini-1.5-flash',       # Fast and versatile
+    '1.5-pro': 'gemini-1.5-pro',           # Complex reasoning
+    'pro': 'gemini-1.5-pro',               # Alias for 1.5-pro
+    'claude-haiku': 'claude-haiku',         # Claude Haiku model
+}
+
+def get_model_from_env() -> str:
+    """Get model name from environment variable or use default."""
+    return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
 
 @click.group()
 def cli():
-    """Image Processor CLI - Generate metadata for images using AI"""
+    """Image Sense - AI-powered image metadata processor"""
     pass
 
 @cli.command()
 @click.argument('image_path', type=click.Path(exists=True))
 @click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
               help='Output format for metadata (csv or xml)')
-def process(image_path: str, output_format: str):
-    """Process a single image and generate metadata"""
+@click.option('--no-compress', is_flag=True, help='Disable image compression (not recommended for large files)')
+def process(image_path: str, output_format: str, no_compress: bool):
+    """Process a single image"""
     try:
         # Get API key from environment
         api_key = os.getenv("GOOGLE_API_KEY")
@@ -34,16 +46,15 @@ def process(image_path: str, output_format: str):
             sys.exit(1)
 
         # Validate image path
-        image_path = validate_image_path(image_path)
-        if not image_path:
+        if not os.path.isfile(image_path):
             click.echo("Error: Invalid image path", err=True)
             sys.exit(1)
 
-        # Get provider
-        provider = get_provider(api_key)
+        # Initialize processor with default model
+        processor = ImageProcessor(api_key=api_key)
 
-        # Process image
-        result = provider.analyze_image(image_path)
+        # Process image with compression by default
+        result = asyncio.run(processor.process_single(image_path, compress=not no_compress))
 
         # Save output
         output_path = save_metadata(result, image_path, output_format)
@@ -59,7 +70,14 @@ def process(image_path: str, output_format: str):
 @click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
               help='Output format for metadata (csv or xml)')
 @click.option('--recursive', '-r', is_flag=True, help='Process directories recursively')
-def bulk_process(directory: str, output_format: str, recursive: bool):
+@click.option('--no-compress', is_flag=True, help='Disable image compression (not recommended for large files)')
+@click.option('--model', '-m', type=click.Choice(list(AVAILABLE_MODELS.keys())), 
+              help='Gemini model to use (default: from env or flash-exp)')
+@click.option('--batch-size', '-b', type=int, default=1, 
+              help='Number of images to process in one API call (default: 1)')
+@click.option('--output-dir', '-o', type=click.Path(), default='metadata',
+              help='Output directory for metadata files (default: metadata)')
+def bulk_process(directory: str, output_format: str, recursive: bool, no_compress: bool, model: str, batch_size: int, output_dir: str):
     """Process all images in a directory"""
     try:
         # Get API key from environment
@@ -68,30 +86,36 @@ def bulk_process(directory: str, output_format: str, recursive: bool):
             click.echo("Error: GOOGLE_API_KEY environment variable not set", err=True)
             sys.exit(1)
 
-        # Get provider
-        provider = get_provider(api_key)
+        # Get model name
+        model_name = AVAILABLE_MODELS[model] if model else get_model_from_env()
+        click.echo(f"Using model: {model_name}")
 
-        # Get image paths
-        directory_path = Path(directory)
-        pattern = '**/*' if recursive else '*'
-        image_paths = []
-        for ext in ['.jpg', '.jpeg', '.png', '.webp']:
-            image_paths.extend(directory_path.glob(f'{pattern}{ext}'))
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
 
-        if not image_paths:
-            click.echo("No images found in directory", err=True)
-            sys.exit(1)
+        # Initialize image processor with selected model and batch size
+        processor = ImageProcessor(api_key=api_key, model=model_name, batch_size=batch_size)
 
-        # Process each image
-        with click.progressbar(image_paths, label='Processing images') as bar:
-            for image_path in bar:
-                try:
-                    result = provider.analyze_image(str(image_path))
-                    output_path = save_metadata(result, str(image_path), output_format)
-                    click.echo(f"Processed: {image_path.name} -> {output_path}")
-                except Exception as e:
-                    click.echo(f"Error processing {image_path.name}: {str(e)}", err=True)
+        # Process images with compression enabled by default
+        results = asyncio.run(processor.process_images(directory, compress=not no_compress))
 
+        # Save results
+        if output_format == 'xml':
+            output_path = os.path.join(output_dir, 'analysis_results.xml')
+        else:
+            output_path = os.path.join(output_dir, 'analysis_results.csv')
+
+        # Save metadata using metadata handler
+        handler = MetadataHandler()
+        handler.process_batch(
+            image_paths=[r['path'] for r in results] if results else [],
+            operation='write',
+            metadata=results,
+            output_format=output_format,
+            output_path=output_path
+        )
+
+        click.echo(f"Results saved to: {output_path}")
         sys.exit(0)
 
     except Exception as e:

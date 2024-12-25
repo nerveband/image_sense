@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<image_analysis_results>
+  <image>
+    <path>tests/test_images/bulk_images_5/diverse-business-team-meeting-at-table-2023-11-27-04-49-47-utc.jpg</path>
+    <success>True</success>
+  </image>
+  <image>
+    <path>tests/test_images/bulk_images_5/fist-hands-circle-and-diversity-support-human-rig-2023-11-27-05-32-40-utc.jpg</path>
+    <success>True</success>
+  </image>
+  <image>
+    <path>tests/test_images/bulk_images_5/gambling-poker-blackjack-cards-hand-shown-and-dice-2023-11-27-05-27-05-utc.jpg</path>
+    <success>True</success>
+  </image>
+  <image>
+    <path>tests/test_images/bulk_images_5/gold-golden-texture-background-shiny-gloss-2023-11-27-05-12-17-utc.jpg</path>
+    <success>True</success>
+  </image>
+  <image>
+    <path>tests/test_images/bulk_images_5/happy-creative-marketing-team-working-on-new-busin-2024-12-13-18-37-46-utc.jpg</path>
+    <success>True</success>
+  </image>
+</image_analysis_results>

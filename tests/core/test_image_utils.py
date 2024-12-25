@@ -121,24 +121,73 @@ def test_process_image_batch(setup_test_files):
     assert len(results) == 4
     
     # First file (valid jpg)
-    assert results[0][0] == test_files[0]  # file path
-    assert results[0][1] is True           # is valid
-    assert results[0][2] is None           # no error
+    assert isinstance(results[0], dict)
+    assert results[0]['path'] == str(test_files[0])
+    assert results[0]['success'] is True
+    assert 'description' in results[0]
+    assert 'keywords' in results[0]
+    assert isinstance(results[0]['keywords'], list)
     
     # Second file (nonexistent)
-    assert results[1][0] == test_files[1]
-    assert results[1][1] is False
-    assert 'not found' in results[1][2].lower()
+    assert isinstance(results[1], dict)
+    assert results[1]['path'] == str(test_files[1])
+    assert results[1]['success'] is False
+    assert 'error' in results[1]
+    assert 'not found' in results[1]['error'].lower()
     
     # Third file (invalid format)
-    assert results[2][0] == test_files[2]
-    assert results[2][1] is False
-    assert 'unsupported format' in results[2][2].lower()
+    assert isinstance(results[2], dict)
+    assert results[2]['path'] == str(test_files[2])
+    assert results[2]['success'] is False
+    assert 'error' in results[2]
+    assert 'unsupported format' in results[2]['error'].lower()
     
     # Fourth file (valid png)
-    assert results[3][0] == test_files[3]
-    assert results[3][1] is True
-    assert results[3][2] is None
+    assert isinstance(results[3], dict)
+    assert results[3]['path'] == str(test_files[3])
+    assert results[3]['success'] is True
+    assert 'description' in results[3]
+    assert 'keywords' in results[3]
+    assert isinstance(results[3]['keywords'], list)
+
+def test_process_image_batch_structured_output(setup_test_files):
+    """Test batch processing with structured output."""
+    # Test with valid files only
+    test_files = [
+        setup_test_files['valid_images'][0],  # valid jpg
+        setup_test_files['valid_images'][1]   # valid png
+    ]
+    
+    results = process_image_batch(test_files)
+    
+    # Check results structure
+    assert len(results) == 2
+    
+    for result in results:
+        assert isinstance(result, dict)
+        assert result['success'] is True
+        assert 'path' in result
+        assert 'description' in result
+        assert 'keywords' in result
+        assert isinstance(result['keywords'], list)
+        
+        # Check optional fields if present
+        if 'technical_details' in result:
+            assert isinstance(result['technical_details'], dict)
+            assert 'format' in result['technical_details']
+            assert 'dimensions' in result['technical_details']
+            
+        if 'visual_elements' in result:
+            assert isinstance(result['visual_elements'], list)
+            
+        if 'composition' in result:
+            assert isinstance(result['composition'], list)
+            
+        if 'mood' in result:
+            assert isinstance(result['mood'], str)
+            
+        if 'use_cases' in result:
+            assert isinstance(result['use_cases'], list)
 
 def teardown_module():
     """Clean up test data after tests."""
