@@ -102,55 +102,54 @@ class MetadataHandler:
                         'original_filename': os.path.basename(image_path)
                     }
                 
-                # Log the tags we're about to write
                 logger.debug(f"Writing EXIF tags: {tags}")
                 
-                # Prepare command parameters
+                # Convert tags to exiftool parameters
                 params = []
-                if not backup:
-                    params.append('-overwrite_original')
-                
-                # Convert tags to exiftool format and add to params
                 for tag, value in tags.items():
                     if isinstance(value, list):
+                        # Handle list values (like keywords)
                         for item in value:
-                            if item:  # Only add non-empty values
-                                params.append(f"{tag}={str(item)}")
+                            params.append(f"{tag}={str(item)}")
                     else:
-                        if value:  # Only add non-empty values
-                            params.append(f"{tag}={str(value)}")
+                        params.append(f"{tag}={str(value)}")
                 
                 logger.debug(f"ExifTool parameters: {params}")
                 
-                # Execute exiftool command
-                self.et.execute(*params, image_path)
-                logger.info(f"Successfully wrote metadata to {os.path.basename(image_path)}")
+                # Create output path
+                output_path = image_path
+                if duplicate:
+                    base, ext = os.path.splitext(image_path)
+                    output_path = f"{base}_exif1{ext}"
                 
-                # Verify the metadata was written
-                verify_result = self.read_metadata(image_path)
+                # Write metadata
+                self.et.execute("-overwrite_original", *params, output_path)
                 
-                if verify_result.get('success', False):
+                # Verify metadata was written
+                verification = self.read_metadata(output_path)
+                if verification['success']:
+                    logger.info(f"Successfully wrote metadata to {os.path.basename(output_path)}")
                     logger.info("Metadata verification successful")
                     return {
                         'success': True,
+                        'output_path': output_path,
                         'original_path': image_path,
-                        'original_filename': os.path.basename(image_path),
-                        'modified_path': image_path,
-                        'message': f"Successfully wrote and verified metadata for {os.path.basename(image_path)}"
+                        'original_filename': os.path.basename(image_path)
                     }
-                
-                return {
-                    'success': False,
-                    'error': 'Failed to verify metadata was written',
-                    'original_path': image_path,
-                    'original_filename': os.path.basename(image_path)
-                }
-                
+                else:
+                    raise MetadataError("Metadata verification failed")
+                    
             except Exception as e:
-                logger.error(f"ExifTool error: {str(e)}")
+                error_msg = f"Failed to write metadata: {str(e)}"
+                logger.error(error_msg)
+                if os.path.exists(output_path) and output_path != image_path:
+                    try:
+                        os.remove(output_path)
+                    except:
+                        pass
                 return {
                     'success': False,
-                    'error': f'Failed to write metadata: {str(e)}',
+                    'error': error_msg,
                     'original_path': image_path,
                     'original_filename': os.path.basename(image_path)
                 }

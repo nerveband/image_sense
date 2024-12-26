@@ -7,58 +7,71 @@ from typing import List, Dict, Any, Union
 import logging
 from lxml import etree
 from pathlib import Path
+from .config import Config
 
-def save_metadata(result: Dict[str, Any], image_path: str, output_format: str = 'csv') -> str:
-    """Save metadata to a file in the specified format."""
-    # Create output path
-    output_dir = os.path.dirname(image_path)
-    base_name = os.path.splitext(os.path.basename(image_path))[0]
-    output_path = os.path.join(output_dir, f"{base_name}_metadata.{output_format}")
-    
-    try:
-        # Create output directory if it doesn't exist
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
-        if output_format == 'csv':
-            # Save as CSV
-            with open(output_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=result.keys())
-                writer.writeheader()
-                # Convert lists to strings
-                row = result.copy()
-                for key, value in row.items():
-                    if isinstance(value, (list, tuple)):
-                        row[key] = '; '.join(str(v) for v in value)
-                writer.writerow(row)
-        else:
-            # Save as XML
-            root = ET.Element("image_metadata")
-            for key, value in result.items():
-                elem = ET.SubElement(root, key)
-                if isinstance(value, (list, tuple)):
-                    for item in value:
-                        item_elem = ET.SubElement(elem, "item")
-                        item_elem.text = str(item)
-                else:
-                    elem.text = str(value)
-            tree = ET.ElementTree(root)
-            tree.write(output_path, encoding='utf-8', xml_declaration=True)
-        
-        return output_path
-        
-    except Exception as e:
-        logging.error(f"Error saving metadata: {str(e)}")
-        raise
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class OutputHandler:
-    """Handler for output operations."""
+    """Handler for saving analysis results to different formats."""
     
-    def __init__(self):
+    def __init__(self, config: Config = None):
         """Initialize the output handler."""
+        self.config = config or Config()
         self.logger = logging.getLogger(__name__)
         
-    def save_to_csv(self, results: List[Dict[str, Any]], output_path: str) -> None:
-        """Save results to CSV file."""
+    def save_results(self, results: List[Dict[str, Any]], input_path: str) -> Dict[str, str]:
+        """Save results to configured formats.
+        
+        Args:
+            results: List of results to save
+            input_path: Path to input file/directory
+            
+        Returns:
+            Dictionary with paths to saved output files
+        """
+        saved_files = {}
+        
+        # Get base output path
+        base_path = self._get_base_output_path(input_path)
+        
+        # Save CSV if enabled (default: true)
+        if self.config.save_csv:
+            csv_path = f"{base_path}.csv"
+            self.save_to_csv(results, csv_path)
+            saved_files['csv'] = csv_path
+            
+        # Save XML if enabled (default: true)
+        if self.config.save_xml:
+            xml_path = f"{base_path}.xml"
+            self.save_to_xml(results, xml_path)
+            saved_files['xml'] = xml_path
+            
+        return saved_files
+        
+    def _get_base_output_path(self, input_path: str) -> str:
+        """Get base output path for a given input path."""
+        # Create output directory if it doesn't exist
+        os.makedirs(self.config.output_directory, exist_ok=True)
+        
+        # If input is a directory, use its name
+        if os.path.isdir(input_path):
+            base_name = os.path.basename(os.path.normpath(input_path))
+        else:
+            # If input is a file, use its name without extension
+            base_name = os.path.splitext(os.path.basename(input_path))[0]
+            
+        return os.path.join(self.config.output_directory, f"{base_name}_metadata")
+
+    def save_to_csv(self, results: List[Dict[str, Any]], output_path: str, append: bool = False) -> None:
+        """Save results to CSV file.
+        
+        Args:
+            results: List of results to save
+            output_path: Path to save CSV file to
+            append: Whether to append to existing file (if it exists)
+        """
         try:
             # Create output directory if it doesn't exist
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -137,10 +150,15 @@ class OutputHandler:
                     self.logger.error(f"Unexpected error parsing XML: {str(e)}")
                     return {'description': content, 'error': f"Error parsing content: {str(e)}"}
             
+            # Determine write mode based on append flag and file existence
+            write_mode = 'a' if append and os.path.exists(output_path) else 'w'
+            write_header = write_mode == 'w' or (write_mode == 'a' and os.path.getsize(output_path) == 0)
+            
             # Write results to CSV
-            with open(output_path, 'w', newline='', encoding='utf-8') as f:
+            with open(output_path, write_mode, newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
-                writer.writeheader()
+                if write_header:
+                    writer.writeheader()
                 for result in results:
                     # Create a new dictionary for the row to avoid modifying the original
                     row = {}
@@ -168,49 +186,56 @@ class OutputHandler:
                     
                     writer.writerow(row)
                     
-            self.logger.info(f"Saved results to CSV: {output_path}")
+            self.logger.info(f"{'Appended' if append else 'Saved'} results to CSV: {output_path}")
             
         except Exception as e:
             self.logger.error(f"Error saving CSV: {str(e)}")
             raise 
 
-    def save_to_xml(self, results: List[Dict[str, Any]], output_path: Union[str, Path]) -> None:
+    def save_to_xml(self, results: List[Dict[str, Any]], output_path: str, append: bool = False) -> None:
         """Save results to XML file.
         
         Args:
             results: List of results to save
             output_path: Path to save XML file to
+            append: Whether to append to existing file
         """
         try:
+            # Create output directory if it doesn't exist
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
             # Create root element
-            root = ET.Element('results')
+            root = etree.Element('results')
             
             # Add results
             for result in results:
-                image_elem = ET.SubElement(root, 'image')
+                if not result:  # Skip empty results
+                    continue
+                    
+                image = etree.SubElement(root, 'image')
                 
-                # Add path attribute
-                if 'original_path' in result:
-                    image_elem.set('path', result['original_path'])
+                # Add path attribute if present
+                if result.get('original_path'):
+                    image.set('path', str(result['original_path']))
+                
+                # Add original filename if present
+                if result.get('original_filename'):
+                    orig_filename = etree.SubElement(image, 'original_filename')
+                    orig_filename.text = str(result['original_filename'])
                 
                 # Add content if present
-                if 'content' in result:
-                    content_elem = ET.SubElement(image_elem, 'content')
-                    content_elem.text = str(result['content'])
-                
-                # Add metadata if present
-                if 'metadata' in result:
-                    metadata_elem = ET.SubElement(image_elem, 'metadata')
-                    self._add_metadata_to_xml(metadata_elem, result['metadata'])
+                if result.get('content'):
+                    content = etree.SubElement(image, 'content')
+                    content.text = str(result['content'])
                 
                 # Add error if present
-                if 'error' in result:
-                    error_elem = ET.SubElement(image_elem, 'error')
-                    error_elem.text = str(result['error'])
+                if result.get('error'):
+                    error = etree.SubElement(image, 'error')
+                    error.text = str(result['error'])
             
-            # Create XML tree and save
-            tree = ET.ElementTree(root)
-            tree.write(str(output_path), encoding='utf-8', xml_declaration=True)
+            # Write to file
+            tree = etree.ElementTree(root)
+            tree.write(output_path, encoding='utf-8', xml_declaration=True, pretty_print=True)
             
             self.logger.info(f"Saved results to XML: {output_path}")
             

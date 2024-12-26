@@ -8,6 +8,7 @@ from PIL import Image
 import logging
 import shutil
 from pathlib import Path
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -128,6 +129,9 @@ def process_image_batch(file_paths: List[str]) -> List[Tuple[str, bool, Optional
 def compress_image(input_path: str, output_path: str, max_dimension: int = 1920, quality: int = 85) -> str:
     """Compress an image while maintaining aspect ratio."""
     try:
+        # Start timing
+        start_time = time.time()
+        
         # Validate input
         if not os.path.exists(input_path):
             raise FileNotFoundError(f"Input file not found: {input_path}")
@@ -136,10 +140,15 @@ def compress_image(input_path: str, output_path: str, max_dimension: int = 1920,
         if not 0 <= quality <= 100:
             raise ValueError(f"Quality must be between 0 and 100, got {quality}")
 
+        # Get original file size
+        original_size = os.path.getsize(input_path) / (1024 * 1024)  # Convert to MB
+        logger.info(f"Starting compression of {os.path.basename(input_path)} ({original_size:.2f} MB)")
+
         # Open and process image
         with Image.open(input_path) as img:
             # Convert to RGB if necessary
             if img.mode in ('RGBA', 'P'):
+                logger.info("Converting image to RGB mode")
                 img = img.convert('RGB')
                 
             # Calculate new dimensions
@@ -151,10 +160,24 @@ def compress_image(input_path: str, output_path: str, max_dimension: int = 1920,
                 else:
                     new_height = max_dimension
                     new_width = int(width * (max_dimension / height))
+                logger.info(f"Resizing image from {width}x{height} to {new_width}x{new_height}")
                 img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
             
             # Save compressed image
+            logger.info(f"Saving compressed image with quality {quality}")
             img.save(output_path, 'JPEG', quality=quality, optimize=True)
+            
+        # Calculate compression stats
+        end_time = time.time()
+        compressed_size = os.path.getsize(output_path) / (1024 * 1024)  # Convert to MB
+        compression_ratio = (1 - compressed_size/original_size) * 100
+        processing_time = end_time - start_time
+        
+        logger.info(f"Compression complete:")
+        logger.info(f"- Original size: {original_size:.2f} MB")
+        logger.info(f"- Compressed size: {compressed_size:.2f} MB")
+        logger.info(f"- Compression ratio: {compression_ratio:.1f}%")
+        logger.info(f"- Processing time: {processing_time:.2f} seconds")
             
         return output_path
         

@@ -18,7 +18,8 @@ class Config:
         
         # Output
         self.output_directory = os.getenv('OUTPUT_DIR', 'output')
-        self.default_output_format = os.getenv('DEFAULT_OUTPUT_FORMAT', 'csv')
+        self.save_csv = os.getenv('SAVE_CSV_OUTPUT', 'true').lower() == 'true'
+        self.save_xml = os.getenv('SAVE_XML_OUTPUT', 'true').lower() == 'true'
         self.duplicate_files = os.getenv('DUPLICATE_FILES', 'false').lower() == 'true'
         
         # Batch processing
@@ -33,10 +34,9 @@ class Config:
         # EXIF writing
         self.write_exif = os.getenv('WRITE_EXIF', 'true').lower() == 'true'
 
-    def get_output_path(self, input_path: str, output_format: Optional[str] = None) -> Path:
-        """Get the output path for a given input path."""
+    def get_output_path(self, input_path: str, output_format: str) -> Path:
+        """Get the output path for a given input path and format."""
         input_path = Path(input_path)
-        output_format = output_format or self.default_output_format
         output_dir = Path(self.output_directory)
         
         # Create output directory if it doesn't exist
