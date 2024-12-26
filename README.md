@@ -1,23 +1,27 @@
-# Image Sense
+# Image Sense v0.1.0
 
 ![Image Sense](icon/Image%20Sense%20Banner.jpg)
 
 An AI-powered image analysis and metadata management tool that uses state-of-the-art machine learning models to analyze images and generate rich, structured metadata.
 
-## CURRENTLY UNSTABLE. USE AT YOUR OWN RISK. 
+## Status: Alpha Release
+**CURRENTLY IN ALPHA. USE AT YOUR OWN RISK.**
+- Version: 0.1.0
+- Release Date: 2024-12-25
+- Status: Development
 
 ## Features
 
-- 🖼️ Advanced image analysis using Google's Gemini Vision API
-- 📝 Rich, structured metadata generation
-- 🔄 Batch processing with smart compression
-- 💾 Multiple output formats (CSV, XML)
-- 🏷️ Automatic EXIF metadata writing
-- 📊 AI-powered filename suggestions
-- 📋 Complete file operation tracking
-- 🔒 Non-destructive processing options
-- 📊 Progress tracking and statistics
-- ⚙️ Highly configurable via environment variables
+- 🖼️ Advanced image analysis using Google's Gemini Vision API and Anthropic Claude
+- 📝 Rich, structured metadata generation with AI-powered descriptions
+- 🔄 Batch processing with smart compression and parallel processing
+- 💾 Multiple output formats (CSV, XML) with customizable schemas
+- 🏷️ Automatic EXIF metadata writing and management
+- 📊 AI-powered filename suggestions and organization
+- 📋 Complete file operation tracking with detailed logs
+- 🔒 Non-destructive processing with backup options
+- 📊 Progress tracking and detailed statistics
+- ⚙️ Highly configurable via environment variables and CLI
 
 ## Installation
 

@@ -1,33 +1,54 @@
+# Codebase Summary v0.1.0
+
 ## Key Components and Their Interactions
 
--   **CLI**: The command-line interface handles user input and orchestrates the processing.
--   **Models**: The AI models (Gemini and Anthropic) generate image metadata.
--   **Output Handlers**: These components format the metadata into CSV or XML.
--   **Tests**: Pytest is used to ensure the functionality of all components.
+### Core Components
+-   **CLI (src/cli)**: Command-line interface for user interaction and process orchestration
+-   **Models (src/models)**: AI model integrations (Gemini and Anthropic) for image analysis
+-   **Output Handlers (src/output)**: Formatters for CSV and XML output with schema support
+-   **Core (src/core)**: Core processing logic and utilities
+-   **Tests (tests/)**: Comprehensive test suite using pytest
 
 ## Data Flow
 
-1. User inputs command via CLI.
-2. CLI parses the command and determines the processing mode (single or bulk).
-3. Images are loaded from the specified directory.
-4. The selected AI model generates metadata for each image.
-5. Metadata is formatted into the chosen output format (CSV or XML).
-6. Output is written to the specified file or directory.
+1. User inputs command via CLI with configuration options
+2. CLI validates input and determines processing mode (single/bulk)
+3. Core processor loads and validates images
+4. Selected AI model(s) generate metadata for each image
+5. Output handlers format metadata according to schema
+6. Results are written to specified location with error handling
 
 ## External Dependencies
 
--   **Gemini**: Used for generating image metadata.
--   **Anthropic**: Used for generating image metadata.
--   **pytest**: Used for testing.
--   **click**: Used for creating the command-line interface.
--   **pandas**: Used for handling CSV output.
--   **lxml**: Used for handling XML output.
+### AI Models
+-   **Gemini**: Primary model for image analysis
+    - Rate limited API calls
+    - Async processing support
+-   **Anthropic**: Secondary model for enhanced analysis
+    - Rate limited API calls
+    - Async processing support
+
+### Core Libraries
+-   **pytest**: Testing framework
+-   **click**: CLI framework
+-   **pandas**: Data handling
+-   **lxml**: XML processing
+-   **Pillow**: Image processing
+-   **aiohttp**: Async HTTP
+-   **asyncio**: Async operations
 
 ## Recent Significant Changes
 
--   Initial project setup.
--   Basic structure for CLI, models, and output handlers.
+### v0.1.0 (2024-12-25)
+-   Initial project structure
+-   Basic CLI implementation
+-   Core processing logic
+-   AI model integration
+-   Documentation setup
+-   Version control implementation
 
-## User Feedback Integration and Its Impact on Development
+## User Feedback Integration
 
--   None yet. 
+-   Project in alpha stage
+-   Feedback system to be implemented
+-   GitHub issues tracking planned
