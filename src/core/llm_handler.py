@@ -12,8 +12,11 @@ from rich.table import Table
 from pathlib import Path
 import shutil
 import absl.logging
+import asyncio
+import time
 from . import image_utils
 from .config import config
+import xml.etree.ElementTree as ET
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +61,10 @@ class GeminiProvider:
         self.api_key = api_key
         self.model_name = model
         self.verbose = verbose
+        self.request_count = 0
+        self.last_request_time = 0
+        self.rate_limit = 10  # requests per second
+        self.rate_window = 1.0  # seconds
         
         # Configure the API
         genai.configure(api_key=api_key)
@@ -70,6 +77,25 @@ class GeminiProvider:
             if self.verbose:
                 console.print(f"[red]✗ Error initializing Gemini model:[/] {str(e)}")
             raise Exception(f"Failed to initialize Gemini model: {str(e)}")
+    
+    async def _check_rate_limit(self):
+        """Check and enforce rate limiting."""
+        current_time = time.time()
+        time_passed = current_time - self.last_request_time
+        
+        if time_passed < self.rate_window:
+            if self.request_count >= self.rate_limit:
+                wait_time = self.rate_window - time_passed
+                if self.verbose:
+                    console.print(f"[yellow]⚠️ Rate limit reached, waiting {wait_time:.2f}s[/]")
+                await asyncio.sleep(wait_time)
+                self.request_count = 0
+                self.last_request_time = time.time()
+        else:
+            self.request_count = 0
+            self.last_request_time = current_time
+        
+        self.request_count += 1
     
     def _load_image(self, image_path: str) -> Image.Image:
         """Load an image file."""
@@ -85,61 +111,74 @@ class GeminiProvider:
         try:
             if self.verbose:
                 with console.status("[bold blue]🤖 Processing with Gemini...[/]") as status:
-                    # Compress image for LLM
-                    status.update("[bold yellow]🔄 Optimizing image for Gemini...[/]")
-                    original_size = os.path.getsize(image_path) / 1024  # KB
-                    
-                    temp_dir, compressed_path = image_utils.create_llm_optimized_copy(
-                        image_path,
-                        max_dimension=1024,  # Optimize for Gemini
-                        quality=85
-                    )
-                    
-                    compressed_size = os.path.getsize(compressed_path) / 1024  # KB
-                    reduction = (1 - compressed_size/original_size) * 100
-                    
-                    console.print(f"[green]✓ Image optimized[/]")
-                    console.print(f"[dim]Original size: {original_size:.1f}KB[/]")
-                    console.print(f"[dim]Optimized size: {compressed_size:.1f}KB[/]")
-                    console.print(f"[dim]Reduction: {reduction:.1f}%[/]")
-                    
-                    # Load and prepare the image
-                    status.update("[bold yellow]📸 Loading image...[/]")
-                    img = self._load_image(compressed_path)
-                    
-                    # Create the prompt parts and generate content
-                    status.update("[bold yellow]🚀 Sending to Gemini API...[/]")
-                    console.print("[dim]Waiting for response from Gemini...[/]")
-                    
-                    response = self.model.generate_content([
-                        CONTENT_TEMPLATE,
-                        img
-                    ])
-                    
-                    # Wait for completion and handle response
-                    status.update("[bold yellow]⏳ Processing response...[/]")
-                    response.resolve()
-                    console.print("[green]✓[/] Received response from Gemini")
-                    
-                    # Print the raw response for debugging
-                    console.print("\n[cyan]📝 Raw Gemini Response:[/]")
-                    console.print("[dim]" + "─" * 50 + "[/]")
-                    console.print(response.text)
-                    console.print("[dim]" + "─" * 50 + "[/]\n")
-                    
-                    # Cleanup temp files
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except Exception as e:
-                        logger.warning(f"Failed to cleanup temp files: {e}")
+                    return await self._process_image(image_path, status)
             else:
-                img = self._load_image(image_path)
-                response = self.model.generate_content([CONTENT_TEMPLATE, img])
-                response.resolve()
+                return await self._process_image(image_path)
+            
+        except Exception as e:
+            if self.verbose:
+                console.print(f"[red]✗ Error: {str(e)}[/]")
+            logger.error(f"Error analyzing image with Gemini: {str(e)}")
+            raise Exception(f"Error analyzing image with Gemini: {str(e)}")
+    
+    async def _process_image(self, image_path: str, status=None) -> Dict[str, Any]:
+        """Internal method to process an image."""
+        # Check rate limit
+        await self._check_rate_limit()
+        
+        # Compress image for LLM
+        if status:
+            status.update("[bold yellow]🔄 Optimizing image for Gemini...[/]")
+        
+        original_size = os.path.getsize(image_path) / 1024  # KB
+        
+        temp_dir, compressed_path = image_utils.create_llm_optimized_copy(
+            image_path,
+            max_dimension=1024,  # Optimize for Gemini
+            quality=85
+        )
+        
+        compressed_size = os.path.getsize(compressed_path) / 1024  # KB
+        reduction = (1 - compressed_size/original_size) * 100
+        
+        if self.verbose:
+            console.print(f"[green]✓ Image optimized[/]")
+            console.print(f"[dim]Original size: {original_size:.1f}KB[/]")
+            console.print(f"[dim]Optimized size: {compressed_size:.1f}KB[/]")
+            console.print(f"[dim]Reduction: {reduction:.1f}%[/]")
+        
+        try:
+            # Load and prepare the image
+            if status:
+                status.update("[bold yellow]📸 Loading image...[/]")
+            img = self._load_image(compressed_path)
+            
+            # Create the prompt parts and generate content
+            if status:
+                status.update("[bold yellow]🚀 Sending to Gemini API...[/]")
+            if self.verbose:
+                console.print("[dim]Waiting for response from Gemini...[/]")
+            
+            response = self.model.generate_content([
+                CONTENT_TEMPLATE,
+                img
+            ])
+            
+            # Wait for completion and handle response
+            if status:
+                status.update("[bold yellow]⏳ Processing response...[/]")
+            response.resolve()
+            
+            if self.verbose:
+                console.print("[green]✓[/] Received response from Gemini")
+                
+                # Print the raw response for debugging
+                console.print("\n[cyan]📝 Raw Gemini Response:[/]")
+                console.print("[dim]" + "─" * 50 + "[/]")
+                console.print(response.text)
+                console.print("[dim]" + "─" * 50 + "[/]\n")
             
             if not response.candidates or not response.text:
-                if self.verbose:
-                    console.print("[red]✗ No valid response generated[/]")
                 raise ValueError("No valid response generated")
             
             # Extract and clean the response
@@ -152,8 +191,6 @@ class GeminiProvider:
             
             end = text.find('</image_analysis>')
             if end == -1:
-                if self.verbose:
-                    console.print("[red]✗ Invalid XML format in response[/]")
                 raise ValueError("No valid XML content found in response")
             
             xml_content = text[start:end + len('</image_analysis>')]
@@ -163,23 +200,142 @@ class GeminiProvider:
                 console.print("[cyan]📝 Parsed Analysis:[/]")
                 # Print the formatted XML content
                 for line in xml_content.split('\n'):
-                    console.print(f"  [dim]{line}[/]")
+                    console.print("  " + line.strip())
             
-            # Parse XML content into structured data
-            return {
-                'content': xml_content.strip(),
-                'metadata': {
-                    'description': 'Image analysis result',
-                    'format': img.format,
-                    'dimensions': f"{img.width}x{img.height}"
-                }
-            }
+            return {'content': xml_content}
             
         except Exception as e:
             if self.verbose:
-                console.print(f"[red]✗ Error: {str(e)}[/]")
-            logger.error(f"Error analyzing image with Gemini: {str(e)}")
-            raise Exception(f"Error analyzing image with Gemini: {str(e)}")
+                console.print(f"[red]✗ Error processing image: {str(e)}[/]")
+            raise e
+        
+        finally:
+            # Clean up temp files
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
+    async def process_batch(self, image_paths: List[str]) -> List[Dict[str, Any]]:
+        """Process a batch of images at once.
+        
+        Args:
+            image_paths: List of paths to image files
+            
+        Returns:
+            List of dictionaries containing analysis results per image
+        """
+        if len(image_paths) > 3600:
+            raise ValueError("Maximum number of images per batch is 3600")
+            
+        # Check rate limit
+        await self._check_rate_limit()
+        
+        # Load and prepare all images
+        images = []
+        temp_dirs = []
+        
+        try:
+            # Create a mapping of images to their indices
+            image_mapping = {f"image_{i+1}": path for i, path in enumerate(image_paths)}
+            
+            for path in image_paths:
+                # Compress and optimize image
+                temp_dir, compressed_path = image_utils.create_llm_optimized_copy(
+                    path,
+                    max_dimension=1024,  # Optimize for Gemini
+                    quality=85
+                )
+                temp_dirs.append(temp_dir)
+                
+                # Load image
+                img = self._load_image(compressed_path)
+                images.append(img)
+            
+            # Create a custom prompt that includes image identifiers
+            custom_prompt = """Analyze the following images. For each image, provide:
+1. Description of the content
+2. Keywords/tags
+3. Visual elements present
+4. Mood/atmosphere
+5. Potential use cases
+
+Format the response in XML with each image's analysis in a separate <image> tag with the image's identifier.
+Example:
+<image_analysis>
+    <image id="image_1">
+        <description>...</description>
+        <keywords>...</keywords>
+        <visual_elements>...</visual_elements>
+        <mood>...</mood>
+        <use_cases>...</use_cases>
+    </image>
+    <image id="image_2">...</image>
+</image_analysis>"""
+
+            # Create the prompt parts and generate content
+            response = self.model.generate_content([
+                custom_prompt,
+                *images
+            ])
+            
+            # Wait for completion and handle response
+            response.resolve()
+            
+            if not response.candidates or not response.text:
+                raise ValueError("No valid response generated")
+            
+            # Extract and clean the response
+            text = response.text
+            
+            # Find the XML content
+            start = text.find('<?xml')
+            if start == -1:
+                start = text.find('<image_analysis>')
+            
+            end = text.find('</image_analysis>')
+            if end == -1:
+                raise ValueError("No valid XML content found in response")
+            
+            xml_content = text[start:end + len('</image_analysis>')]
+            
+            # Parse the XML to get individual image results
+            results = []
+            root = ET.fromstring(xml_content)
+            
+            for image_elem in root.findall('.//image'):
+                image_id = image_elem.get('id', '')
+                if image_id in image_mapping:
+                    original_path = image_mapping[image_id]
+                    
+                    # Extract analysis for this specific image
+                    description = image_elem.find('description').text if image_elem.find('description') is not None else ''
+                    keywords = [k.strip() for k in image_elem.find('keywords').text.split(',')] if image_elem.find('keywords') is not None else []
+                    visual_elements = [v.strip() for v in image_elem.find('visual_elements').text.split(',')] if image_elem.find('visual_elements') is not None else []
+                    mood = image_elem.find('mood').text if image_elem.find('mood') is not None else ''
+                    use_cases = [u.strip() for u in image_elem.find('use_cases').text.split(',')] if image_elem.find('use_cases') is not None else []
+                    
+                    results.append({
+                        'path': original_path,
+                        'content': {
+                            'description': description,
+                            'keywords': keywords,
+                            'visual_elements': visual_elements,
+                            'mood': mood,
+                            'use_cases': use_cases
+                        }
+                    })
+            
+            return results
+            
+        except Exception as e:
+            if self.verbose:
+                console.print(f"[red]✗ Error processing batch: {str(e)}[/]")
+            raise e
+        
+        finally:
+            # Clean up temp files
+            for temp_dir in temp_dirs:
+                if temp_dir and os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
 
     async def analyze_batch(self, image_paths: List[str]) -> List[Dict[str, Any]]:
         """Analyze a batch of images."""

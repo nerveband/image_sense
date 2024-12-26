@@ -66,6 +66,15 @@ class MetadataHandler:
             tags = {}
             
             # Map structured fields to EXIF/IPTC/XMP tags
+            if 'technical_details' in metadata:
+                tech = metadata['technical_details']
+                if 'format' in tech:
+                    tags['-File:FileType'] = str(tech['format'])
+                if 'dimensions' in tech:
+                    tags['-File:ImageSize'] = str(tech['dimensions'])
+                if 'color_space' in tech:
+                    tags['-File:ColorSpace'] = str(tech['color_space'])
+            
             if 'description' in metadata:
                 tags['-IPTC:Caption-Abstract'] = metadata['description']
                 tags['-XMP:Description'] = metadata['description']
@@ -79,61 +88,13 @@ class MetadataHandler:
                     tags['-IPTC:Keywords'] = [str(metadata['keywords'])]
                     tags['-XMP:Subject'] = [str(metadata['keywords'])]
             
-            if 'visual_elements' in metadata:
-                if isinstance(metadata['visual_elements'], list):
-                    tags['-IPTC:Subject'] = metadata['visual_elements']
-                else:
-                    tags['-IPTC:Subject'] = [str(metadata['visual_elements'])]
-            
-            if 'composition' in metadata:
-                if isinstance(metadata['composition'], list):
-                    tags['-IPTC:Notes'] = '\n'.join(str(c) for c in metadata['composition'])
-                else:
-                    tags['-IPTC:Notes'] = str(metadata['composition'])
-            
-            if 'mood' in metadata:
-                tags['-IPTC:Category'] = str(metadata['mood'])
-                tags['-XMP:Mood'] = str(metadata['mood'])
-            
-            if 'use_cases' in metadata:
-                if isinstance(metadata['use_cases'], list):
-                    tags['-XMP:Usage'] = metadata['use_cases']
-                else:
-                    tags['-XMP:Usage'] = [str(metadata['use_cases'])]
-            
-            # Add technical details if present
-            if 'technical_details' in metadata and isinstance(metadata['technical_details'], dict):
-                tech = metadata['technical_details']
-                if 'format' in tech:
-                    tags['-File:FileType'] = str(tech['format'])
-                if 'dimensions' in tech:
-                    tags['-File:ImageSize'] = str(tech['dimensions'])
-                if 'color_space' in tech:
-                    tags['-File:ColorSpace'] = str(tech['color_space'])
-            
             # Add software tag
             tags['-XMP:Software'] = 'Image Sense AI Processor'
             
             # Write metadata using exiftool
             try:
-                # Prepare command parameters
-                params = []
-                if not backup:
-                    params.append('-overwrite_original')
-                
-                # Convert tags to exiftool format
-                for tag, value in tags.items():
-                    if isinstance(value, list):
-                        # Handle list values
-                        for item in value:
-                            if item:  # Only add non-empty values
-                                params.append(f"{tag}={str(item)}")
-                    else:
-                        # Handle single values
-                        if value:  # Only add non-empty values
-                            params.append(f"{tag}={str(value)}")
-                
-                if not params:
+                if not tags:
+                    logger.warning("No metadata tags to write")
                     return {
                         'success': False,
                         'error': 'No valid metadata tags to write',
@@ -141,18 +102,41 @@ class MetadataHandler:
                         'original_filename': os.path.basename(image_path)
                     }
                 
+                # Log the tags we're about to write
+                logger.debug(f"Writing EXIF tags: {tags}")
+                
+                # Prepare command parameters
+                params = []
+                if not backup:
+                    params.append('-overwrite_original')
+                
+                # Convert tags to exiftool format and add to params
+                for tag, value in tags.items():
+                    if isinstance(value, list):
+                        for item in value:
+                            if item:  # Only add non-empty values
+                                params.append(f"{tag}={str(item)}")
+                    else:
+                        if value:  # Only add non-empty values
+                            params.append(f"{tag}={str(value)}")
+                
+                logger.debug(f"ExifTool parameters: {params}")
+                
                 # Execute exiftool command
                 self.et.execute(*params, image_path)
+                logger.info(f"Successfully wrote metadata to {os.path.basename(image_path)}")
                 
                 # Verify the metadata was written
                 verify_result = self.read_metadata(image_path)
                 
                 if verify_result.get('success', False):
+                    logger.info("Metadata verification successful")
                     return {
                         'success': True,
                         'original_path': image_path,
                         'original_filename': os.path.basename(image_path),
-                        'modified_path': image_path
+                        'modified_path': image_path,
+                        'message': f"Successfully wrote and verified metadata for {os.path.basename(image_path)}"
                     }
                 
                 return {
@@ -163,6 +147,7 @@ class MetadataHandler:
                 }
                 
             except Exception as e:
+                logger.error(f"ExifTool error: {str(e)}")
                 return {
                     'success': False,
                     'error': f'Failed to write metadata: {str(e)}',
@@ -171,6 +156,7 @@ class MetadataHandler:
                 }
             
         except Exception as e:
+            logger.error(f"Metadata write error: {str(e)}")
             return {
                 'success': False,
                 'error': f'Error in write_metadata: {str(e)}',

@@ -2,7 +2,7 @@
 
 ![Image Sense](icon/Image%20Sense%20Banner.jpg)
 
-An AI-powered image analysis and metadata management tool that uses state-of-the-art machine learning models to analyze images and generate rich, structured metadata.
+A powerful image analysis and metadata management tool powered by Google's Gemini Vision API.
 
 ## Status: Alpha Release
 **CURRENTLY IN ALPHA. USE AT YOUR OWN RISK.**

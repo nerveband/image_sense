@@ -23,6 +23,8 @@ import absl.logging
 import asyncio
 from PIL import Image
 import numpy as np
+import glob
+import pandas as pd
 
 from .image_utils import compress_image, create_llm_optimized_copy
 from .llm_handler import get_provider
@@ -591,27 +593,87 @@ Important:
             logger.error(error_msg)
             raise ImageProcessingError(error_msg, original_error=e)
 
-    async def process_batch(self, image_paths: List[str], compress: bool = False) -> List[Dict[str, Any]]:
-        """Process a batch of images asynchronously.
+    def _parse_xml_content(self, xml_content: str) -> Dict[str, Any]:
+        """Parse XML content from LLM response.
         
         Args:
-            image_paths: List of paths to image files
-            compress: Whether to compress images before processing
-        
+            xml_content: XML string from LLM
+            
         Returns:
-            List of dictionaries containing analysis results
+            Dictionary containing parsed fields
+            
+        Raises:
+            ValueError: If XML parsing fails
         """
+        try:
+            # Remove XML declaration if present
+            if xml_content.startswith('<?xml'):
+                xml_content = xml_content[xml_content.find('?>')+2:].strip()
+            
+            # Parse XML
+            root = etree.fromstring(xml_content.encode('utf-8'))
+            
+            # Helper function to safely extract text
+            def get_text(element, xpath: str, default: str = '') -> str:
+                node = element.find(xpath)
+                return node.text.strip() if node is not None and node.text else default
+            
+            # Helper function to safely extract list
+            def get_list(element, xpath: str) -> List[str]:
+                return [e.text.strip() for e in element.findall(xpath) if e is not None and e.text]
+            
+            # Extract all fields with validation
+            result = {
+                'description': get_text(root, 'description'),
+                'keywords': get_list(root, './/keyword'),
+                'technical_details': {
+                    'format': get_text(root, './/technical_details/format', 'Unknown'),
+                    'dimensions': get_text(root, './/technical_details/dimensions', 'Unknown'),
+                    'color_space': get_text(root, './/technical_details/color_space', 'Unknown')
+                },
+                'visual_elements': [get_text(root, 'visual_elements')] if get_text(root, 'visual_elements') else [],
+                'composition': [get_text(root, 'composition')] if get_text(root, 'composition') else [],
+                'mood': get_text(root, 'mood'),
+                'use_cases': [use_case.strip() for use_case in get_text(root, 'use_cases').split(',') if use_case.strip()],
+                'suggested_filename': get_text(root, 'suggested_filename')
+            }
+            
+            # Validate required fields
+            required_fields = ['description', 'keywords']
+            missing_fields = [field for field in required_fields if not result.get(field)]
+            
+            if missing_fields:
+                raise ValueError(f"Missing required fields in XML: {', '.join(missing_fields)}")
+                
+            return result
+            
+        except etree.ParseError as e:
+            raise ValueError(f"Invalid XML format: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Error parsing XML content: {str(e)}")
+
+    async def process_batch(self, image_paths: List[str], output_dir: str = None) -> Dict[str, Any]:
+        """Process a batch of images and return their analysis results."""
+        if not image_paths:
+            return {"success": False, "error": "No images provided"}
+
+        results = []
+        successful_count = 0
+
+        # Create output directory if it doesn't exist
+        if output_dir is None:
+            output_dir = os.path.dirname(image_paths[0])
+
+        # Generate CSV filename based on input folder name
+        input_folder_name = os.path.basename(os.path.dirname(image_paths[0]))
+        csv_filename = os.path.join(output_dir, f"{input_folder_name}_results.csv")
+
         if self.verbose_output:
             console.print("\n[bold cyan]🎯 Starting Batch Processing[/]")
             console.print(f"[dim]Total images to process: {len(image_paths)}[/]")
-            if compress:
-                console.print("[yellow]🔄 Compression enabled[/]")
-                console.print(f"[dim]Quality: {self.compression_quality}%[/]")
-                console.print(f"[dim]Max dimension: {self.max_dimension}px[/]")
-        
-        results = []
-        temp_files = []
-        
+
+        batch_size = min(100, len(image_paths))  # Process up to 100 images at once
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -625,154 +687,147 @@ Important:
                 "[bold blue]Overall Progress", 
                 total=len(image_paths)
             )
-            
-            for idx, image_path in enumerate(image_paths, 1):
-                try:
-                    if self.verbose_output:
-                        console.print(f"\n[bold cyan]📸 Processing Image {idx}/{len(image_paths)}[/]")
-                        console.print(f"[dim]Path: {image_path}[/]")
-                    
-                    # Compression step if enabled
-                    if compress:
-                        if self.verbose_output:
-                            console.print("[yellow]🔄 Compressing image...[/]")
-                            
-                        temp_path = os.path.join(tempfile.gettempdir(), f"compressed_{os.path.basename(image_path)}")
-                        original_size = os.path.getsize(image_path)
-                        
-                        compress_image(
-                            image_path, 
-                            temp_path, 
-                            self.compression_quality, 
-                            self.max_dimension
-                        )
-                        
-                        compressed_size = os.path.getsize(temp_path)
-                        reduction = (1 - compressed_size/original_size) * 100
-                        
-                        if self.verbose_output:
-                            console.print(f"[green]✓ Compression complete[/]")
-                            console.print(f"[dim]Original size: {original_size/1024:.1f}KB[/]")
-                            console.print(f"[dim]Compressed size: {compressed_size/1024:.1f}KB[/]")
-                            console.print(f"[dim]Reduction: {reduction:.1f}%[/]")
-                        
-                        image_path = temp_path
-                        temp_files.append(temp_path)
-                    
-                    # Process metadata
-                    if self.verbose_output:
-                        console.print("[yellow]📋 Reading image metadata...[/]")
-                    
-                    metadata = await self._get_image_info(image_path)
-                    
-                    if self.verbose_output:
-                        console.print("[green]✓ Metadata extracted[/]")
-                        console.print(f"[dim]Format: {metadata.get('format', 'Unknown')}[/]")
-                        console.print(f"[dim]Dimensions: {metadata.get('dimensions', 'Unknown')}[/]")
-                    
-                    # Get LLM analysis
-                    if self.verbose_output:
-                        console.print("[yellow]🤖 Starting Gemini analysis...[/]")
-                    
-                    analysis = await self.provider.generate_content(image_path)
-                    
-                    if self.verbose_output:
-                        console.print("[green]✓ Analysis complete[/]")
-                    
-                    # Process results
-                    result = {
-                        'original_path': image_path,
-                        'original_filename': os.path.basename(image_path),
-                        'success': True,
-                        'metadata': metadata,
-                        'analysis': analysis.get('content', ''),
-                        'description': '',
-                        'keywords': [],
-                        'technical_details': {},
-                        'visual_elements': [],
-                        'composition': [],
-                        'mood': '',
-                        'use_cases': [],
-                        'suggested_filename': ''
-                    }
-                    
-                    # Parse XML content
+
+            # Process images in batches
+            for i in range(0, len(image_paths), batch_size):
+                batch = image_paths[i:i+batch_size]
+                retries = 0
+                retry_count = 3
+                success = False
+
+                while retries < retry_count and not success:
                     try:
-                        xml_content = analysis.get('content', '')
-                        # Remove the XML declaration before parsing
-                        if xml_content.startswith('<?xml'):
-                            xml_content = xml_content[xml_content.find('?>')+2:].strip()
-                        
-                        root = etree.fromstring(xml_content.encode('utf-8'))
-                        
-                        # Extract all fields
-                        result['description'] = root.find('description').text.strip() if root.find('description') is not None else ''
-                        result['keywords'] = [k.text.strip() for k in root.findall('.//keyword') if k.text]
-                        result['technical_details'] = {
-                            'format': metadata.get('format', 'Unknown'),
-                            'dimensions': metadata.get('dimensions', 'Unknown'),
-                            'color_space': root.find('technical_details').text.strip() if root.find('technical_details') is not None else ''
-                        }
-                        result['visual_elements'] = [e.text.strip() for e in root.findall('.//visual_elements') if e.text]
-                        result['composition'] = root.find('composition').text.strip() if root.find('composition') is not None else ''
-                        result['mood'] = root.find('mood').text.strip() if root.find('mood') is not None else ''
-                        result['use_cases'] = [u.text.strip() for u in root.findall('.//use_cases') if u.text]
-                        result['suggested_filename'] = root.find('suggested_filename').text.strip() if root.find('suggested_filename') is not None else ''
-                        
                         if self.verbose_output:
-                            console.print("[green]✓ Successfully parsed XML content[/]")
+                            console.print(f"\n[bold cyan]📸 Processing Batch {i//batch_size + 1}/{(len(image_paths) + batch_size - 1)//batch_size}[/]")
+                            console.print(f"[dim]Processing {len(batch)} images[/]")
+
+                        # Process batch using provider
+                        batch_response = await self.provider.process_batch(batch)
+
+                        if not batch_response:
+                            raise ValueError("No response from provider")
+
+                        # Process each image result
+                        for image_result in batch_response:
+                            path = image_result['path']
+                            content = image_result['content']
+
+                            try:
+                                # Get image info
+                                image_info = await self._get_image_info(path)
+
+                                # Prepare result
+                                result = {
+                                    'original_path': path,
+                                    'original_filename': os.path.basename(path),
+                                    'success': True,
+                                    'description': content['description'],
+                                    'keywords': content['keywords'],
+                                    'visual_elements': content['visual_elements'],
+                                    'mood': content['mood'],
+                                    'use_cases': content['use_cases'],
+                                    'format': image_info.get('format', 'Unknown'),
+                                    'dimensions': f"{image_info.get('size', (0, 0))[0]}x{image_info.get('size', (0, 0))[1]}",
+                                    'color_space': image_info.get('mode', 'Unknown')
+                                }
+
+                                # Write metadata if enabled
+                                if self.write_exif:
+                                    exif_metadata = {
+                                        'technical_details': {
+                                            'format': image_info.get('format', 'Unknown'),
+                                            'dimensions': f"{image_info.get('size', (0, 0))[0]}x{image_info.get('size', (0, 0))[1]}",
+                                            'color_space': image_info.get('mode', 'Unknown')
+                                        },
+                                        'description': content['description'],
+                                        'keywords': content['keywords'],
+                                        'visual_elements': content['visual_elements'],
+                                        'mood': content['mood'],
+                                        'use_cases': content['use_cases']
+                                    }
+
+                                    write_result = self.metadata_handler.write_metadata(
+                                        path,
+                                        exif_metadata,
+                                        backup=self.backup_metadata,
+                                        duplicate=self.duplicate_files
+                                    )
+
+                                    if write_result.get('success'):
+                                        if self.verbose_output:
+                                            console.print(f"[green]✓ {write_result.get('message', 'EXIF metadata written successfully')}[/]")
+                                    else:
+                                        error_msg = write_result.get('error', 'Unknown error')
+                                        if self.verbose_output:
+                                            console.print(f"[red]✗ Failed to write EXIF metadata: {error_msg}[/]")
+                                        logger.error(f"EXIF write failed: {error_msg}")
+
+                                results.append(result)
+
+                            except Exception as e:
+                                logger.error(f"Error processing metadata for {path}: {str(e)}")
+                                results.append({
+                                    'original_path': path,
+                                    'original_filename': os.path.basename(path),
+                                    'success': False,
+                                    'error': f"Metadata processing error: {str(e)}"
+                                })
+
+                        success = True
+
                     except Exception as e:
-                        if self.verbose_output:
-                            console.print(f"[red]✗ Error parsing XML: {str(e)}[/]")
-                            console.print("[yellow]⚠️ Raw XML content:[/]")
-                            console.print(xml_content)
-                        result['success'] = False
-                        result['error'] = f"XML parsing error: {str(e)}"
-                    
-                    results.append(result)
-                    
-                    if self.verbose_output:
-                        console.print("[green]✓ Image processing complete[/]")
-                    
-                except Exception as e:
-                    if self.verbose_output:
-                        console.print(f"[red]✗ Error processing image:[/] {str(e)}")
-                    
-                    results.append({
-                        'original_path': image_path,
-                        'original_filename': os.path.basename(image_path),
-                        'success': False,
-                        'error': str(e)
-                    })
-                
-                finally:
-                    progress.update(overall_progress, advance=1)
-        
-        # Cleanup temp files
-        for temp_file in temp_files:
-            try:
-                os.remove(temp_file)
-            except Exception as e:
-                if self.verbose_output:
-                    console.print(f"[yellow]⚠️ Warning: Could not remove temp file {temp_file}: {str(e)}[/]")
-        
+                        retries += 1
+                        if retries >= retry_count:
+                            if self.verbose_output:
+                                console.print(f"[red]✗ Failed after {retry_count} attempts:[/] {str(e)}")
+
+                            for path in batch:
+                                results.append({
+                                    'original_path': path,
+                                    'original_filename': os.path.basename(path),
+                                    'success': False,
+                                    'error': str(e)
+                                })
+                        else:
+                            if self.verbose_output:
+                                console.print(f"[yellow]⚠️ Error occurred, retrying... ({retries}/{retry_count})[/]")
+                            await asyncio.sleep(1)  # Wait before retry
+
+                    finally:
+                        progress.update(overall_progress, advance=len(batch))
+
         if self.verbose_output:
             # Print final summary
+            success = len([r for r in results if isinstance(r, dict) and r.get('success', False)])
+            failed = len([r for r in results if isinstance(r, dict) and not r.get('success', False)])
             console.print("\n[bold cyan]📊 Processing Summary[/]")
-            total = len(image_paths)
-            success = len([r for r in results if r.get('success', False)])
-            failed = total - success
             console.print(f"[green]✓ Successfully processed: {success} images[/]")
             if failed > 0:
                 console.print(f"[red]✗ Failed to process: {failed} images[/]")
-            if compress:
-                total_original = sum(os.path.getsize(p) for p in image_paths)
-                total_compressed = sum(os.path.getsize(r['original_path']) for r in results if r.get('success', False))
-                total_reduction = (1 - total_compressed/total_original) * 100
-                console.print(f"[yellow]🔄 Overall compression: {total_reduction:.1f}% reduction[/]")
-            console.print("[bold green]✨ Batch processing complete![/]\n")
-        
-        return results
+
+        # Write results to CSV
+        try:
+            df = pd.DataFrame(results)
+            df.to_csv(csv_filename, index=False)
+            logger.info(f"Saved results to CSV: {csv_filename}")
+        except Exception as e:
+            logger.error(f"Error saving results to CSV: {e}")
+
+        # Clean up ExifTool backup files
+        try:
+            backup_files = glob.glob(os.path.join(os.path.dirname(image_paths[0]), "*_original"))
+            for backup_file in backup_files:
+                os.remove(backup_file)
+            logger.info(f"Cleaned up {len(backup_files)} ExifTool backup files")
+        except Exception as e:
+            logger.error(f"Error cleaning up backup files: {e}")
+
+        return {
+            "success": True,
+            "processed_count": successful_count,
+            "total_count": len(image_paths),
+            "csv_path": csv_filename
+        }
 
     def save_to_csv(self, results: List[Dict[str, Any]], output_path: str):
         """Save results to CSV file."""

@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from core.config import config
 from core.llm_handler import get_provider
 
+VERSION = "0.1.0-alpha"  # Updated version to reflect alpha status
+
 def main():
     """Main CLI entrypoint."""
     # Load environment variables from .env file if it exists
