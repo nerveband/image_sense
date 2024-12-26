@@ -1,4 +1,4 @@
-# Image Sense v0.1.0
+# Image Sense v0.1.1
 
 ![Image Sense](icon/Image%20Sense%20Banner.jpg)
 
@@ -6,13 +6,13 @@ A powerful image analysis and metadata management tool powered by Google's Gemin
 
 ## Status: Alpha Release
 **CURRENTLY IN ALPHA. USE AT YOUR OWN RISK.**
-- Version: 0.1.0
-- Release Date: 2024-12-25
+- Version: 0.1.1
+- Release Date: 2024-03-20
 - Status: Development
 
 ## Features
 
-- 🖼️ Advanced image analysis using Google's Gemini Vision API and Anthropic Claude
+- 🖼️ Advanced image analysis using Google's Gemini Vision API
 - 📝 Rich, structured metadata generation with AI-powered descriptions
 - 🔄 Batch processing with smart compression and parallel processing
 - 💾 Multiple output formats (CSV, XML) with customizable schemas
@@ -52,41 +52,90 @@ cp .env.example .env
 
 ## Configuration
 
-Image Sense can be configured using environment variables. Create a `.env` file in the project root with the following options:
+Image Sense uses a flexible configuration system with a clear priority order:
 
-### Default Values and Configuration
+1. **Command Line Arguments** (Highest Priority)
+   - Arguments passed directly to commands override all other settings
+   - Example: `--model gemini-2.0-flash-exp` overrides both .env and defaults
 
-Below are the default values used by the application. You can override any of these in your `.env` file:
+2. **Environment Variables** (.env file)
+   - Settings in your .env file override default values
+   - Won't override command line arguments
+
+3. **Default Values** (Lowest Priority)
+   - Built-in defaults used when no other value is specified
+   - Example: `DEFAULT_MODEL=gemini-2.0-flash-exp`
+
+### Command Line Arguments
+
+Most environment variables can be overridden via command line arguments:
+
+```bash
+# Override model selection
+image_sense process image.jpg --model gemini-2.0-flash-exp
+
+# Override API key
+image_sense process image.jpg --api-key YOUR_KEY
+
+# Override output settings
+image_sense process image.jpg --output-format xml --output-dir custom_output
+
+# Override CSV behavior
+image_sense process image.jpg --auto-append  # Append to existing CSV files
+
+# Override processing options
+image_sense process image.jpg --verbose --no-backup --duplicate
+```
+
+### Environment Variables
+
+Configuration uses a priority system:
+1. Command line arguments (highest priority)
+2. Environment variables in `.env` file
+3. Default values in code (lowest priority)
 
 #### Image Processing
 ```env
-# Enable smart compression (recommended for large files)
+# Enable smart compression (default: true)
 COMPRESSION_ENABLED=true
-# JPEG quality (1-100, higher = better quality but larger size)
+# JPEG quality 1-100 (default: 85)
 COMPRESSION_QUALITY=85
-# Maximum dimension in pixels for processing
+# Maximum dimension in pixels (default: 1024)
 MAX_DIMENSION=1024
 ```
 
 #### Batch Processing
 ```env
-# Number of images to process in parallel
-DEFAULT_BATCH_SIZE=8
-# Maximum allowed batch size (model-dependent)
-MAX_BATCH_SIZE=16
+# Number of images to process in parallel (default: 50)
+# Recommended range: 50-500 for optimal performance
+DEFAULT_BATCH_SIZE=50
+# Maximum batch size, Gemini API limit (default: 3000)
+MAX_BATCH_SIZE=3000
+# Minimum batch size for parallel processing (default: 10)
+MIN_BATCH_SIZE=10
+# Enable automatic batch optimization (default: true)
+AUTO_OPTIMIZE_BATCH=true
+# Maximum memory per batch in MB, 0 for unlimited (default: 1024)
+MAX_BATCH_MEMORY=1024
 ```
 
 #### Output Settings
 ```env
-# Default output format (csv or xml)
+# Output format: 'csv' or 'xml' (default: csv)
 DEFAULT_OUTPUT_FORMAT=csv
-# Directory for output files
+# Output directory (default: output)
 OUTPUT_DIRECTORY=output
+# Save CSV files (default: true)
+SAVE_CSV_OUTPUT=true
+# Save XML files (default: true)
+SAVE_XML_OUTPUT=true
+# Append to existing CSV files (default: false)
+AUTO_APPEND_CSV=false
 ```
 
 #### Model Settings
 ```env
-# Default AI model
+# Default AI model (default: gemini-2.0-flash-exp)
 DEFAULT_MODEL=gemini-2.0-flash-exp
 # Available models:
 # - gemini-2.0-flash-exp: Latest experimental model (fastest)
@@ -94,26 +143,50 @@ DEFAULT_MODEL=gemini-2.0-flash-exp
 # - gemini-1.5-pro: More detailed analysis (slower)
 ```
 
+#### File Handling
+```env
+# Enable automatic file renaming (default: false)
+RENAME_FILES=false
+# Prefix for renamed files (default: empty)
+FILE_PREFIX=
+# Create duplicates before modifying (default: false)
+DUPLICATE_FILES=false
+# Suffix for duplicate files (default: _modified)
+DUPLICATE_SUFFIX=_modified
+```
+
 #### Metadata Settings
 ```env
-# Create backups before modifying metadata
+# Create backup copies before modifying (default: true)
 BACKUP_METADATA=true
-# Write analysis results to image EXIF data
+# Write analysis to EXIF data (default: true)
 WRITE_EXIF=true
-# Create duplicate files before modifying
-DUPLICATE_FILES=false
-# Suffix for duplicate files
-DUPLICATE_SUFFIX=_modified
 ```
 
 #### Progress and Logging
 ```env
-# Show progress bars and statistics
+# Show progress bars and statistics (default: true)
 SHOW_PROGRESS=true
-# Show real-time Gemini model responses
-VERBOSE_OUTPUT=false
-# Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+# Show real-time model responses (default: true)
+VERBOSE_OUTPUT=true
+# Logging level (default: INFO)
 LOG_LEVEL=INFO
+```
+
+#### API Settings
+```env
+# Google API key for Gemini Vision API (REQUIRED)
+GOOGLE_API_KEY=your-google-api-key-here
+```
+
+#### System Settings
+```env
+# Path to ExifTool (default: resources/exiftool/exiftool)
+EXIFTOOL_PATH=resources/exiftool/exiftool
+# Maximum API call retries (default: 3)
+MAX_RETRIES=3
+# API call timeout in seconds (default: 30)
+API_TIMEOUT=30
 ```
 
 ## Recent Updates
@@ -147,11 +220,62 @@ LOG_LEVEL=INFO
      - CLI flag: `--verboseoff`
      - Default is verbose on
 
+### Enhanced Batch Processing (March 2024)
+
+1. **Optimized Batch Processing**
+   - Now supports processing up to 3000 images per batch
+   - Default batch size increased to 50 images
+   - Automatic batch size optimization based on system resources
+   - Intermediate results saving to prevent data loss
+   - Memory usage management for large batches
+
+2. **Configuration Options**
+   ```env
+   # Batch size configuration
+   DEFAULT_BATCH_SIZE=50      # Default batch size (recommended: 50-500)
+   MAX_BATCH_SIZE=3000       # Maximum batch size (Gemini limit)
+   MIN_BATCH_SIZE=10         # Minimum batch size
+   AUTO_OPTIMIZE_BATCH=true  # Enable automatic optimization
+   MAX_BATCH_MEMORY=1024     # Maximum memory per batch (MB)
+   ```
+
+3. **Performance Improvements**
+   - Parallel image optimization within batches
+   - Efficient memory management for large batches
+   - Progress tracking per batch and overall
+   - Automatic cleanup of temporary files
+   - Error handling and recovery for batch operations
+
+4. **Usage Examples**
+   ```bash
+   # Process with default batch size (50)
+   image_sense bulk-process path/to/directory
+
+   # Process with custom batch size
+   image_sense bulk-process path/to/directory --batch-size 100
+
+   # Process with automatic batch optimization
+   image_sense bulk-process path/to/directory --auto-optimize
+
+   # Process with memory limit
+   image_sense bulk-process path/to/directory --max-memory 2048
+   ```
+
 ### Usage Examples
 
 Process a single image with default settings (verbose):
 ```bash
 image_sense process path/to/image.jpg
+```
+
+Process a single image and append results to existing CSV:
+```bash
+image_sense process path/to/image.jpg --auto-append
+```
+
+Process multiple images and append to existing CSV:
+```bash
+image_sense bulk-process path/to/directory --auto-append
 ```
 
 Process a single image with verbose output disabled:
@@ -260,7 +384,7 @@ The CSV output includes columns for:
 ### XML Format
 The XML output provides a structured representation of:
 - File information
-  - Original path and filename
+  - Original path and filename (now included in Gemini output)
   - New filename (if renamed)
   - Modified path (if duplicated)
   - Suggested filename
@@ -268,6 +392,46 @@ The XML output provides a structured representation of:
 - Analysis results
 - Technical information
 - Visual characteristics
+
+The XML output can be controlled via:
+- Environment variable: `SAVE_XML_OUTPUT=true/false` (defaults to true)
+- Output directory: Matches the folder name being processed with "_metadata.xml" suffix
+- Each image analysis includes the original filename for proper tracking
+- XML files are saved alongside CSV files when enabled
+
+Example XML structure:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<image_analysis>
+    <original_filename>example.jpg</original_filename>
+    <description>Image description</description>
+    <keywords>
+        <keyword>term1</keyword>
+        <keyword>term2</keyword>
+    </keywords>
+    <technical_details>
+        <format>JPEG</format>
+        <dimensions>1920x1080</dimensions>
+        <color_space>sRGB</color_space>
+    </technical_details>
+    <visual_elements>
+        <element>element1</element>
+        <element>element2</element>
+    </visual_elements>
+    <composition>
+        <technique>technique1</technique>
+        <technique>technique2</technique>
+    </composition>
+    <mood>Mood description</mood>
+    <use_cases>
+        <use_case>use case 1</use_case>
+        <use_case>use case 2</use_case>
+    </use_cases>
+    <suggested_filename>descriptive_name.jpg</suggested_filename>
+</image_analysis>
+```
+
+Note: When processing a folder, the XML output file will be named after the folder (e.g., "folder_name_metadata.xml") and saved in the configured output directory.
 
 ## Contributing
 

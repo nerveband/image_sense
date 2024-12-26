@@ -43,7 +43,17 @@ def get_model_from_env() -> str:
 
 @click.group()
 def cli():
-    """Image Sense CLI for processing and analyzing images."""
+    """Image Sense CLI for processing and analyzing images.
+    
+    Configuration Priority:
+    1. Command line arguments (highest priority)
+    2. Environment variables from .env file
+    3. Default values in code (lowest priority)
+    
+    Example:
+    $ image_sense process image.jpg --model 2-flash  # Command line args override all
+    $ image_sense process image.jpg  # Uses .env settings or defaults
+    """
     # Display banner
     console.print(BANNER)
     
@@ -53,39 +63,65 @@ def cli():
 
 @cli.command()
 @click.argument('image_path', type=click.Path(exists=True))
-@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
-              help='Output format for metadata (csv or xml)')
-@click.option('--no-compress', is_flag=True, help='Disable image compression (not recommended for large files)')
+@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default=None,
+              help='Output format for metadata (csv or xml). Overrides DEFAULT_OUTPUT_FORMAT from .env')
+@click.option('--no-compress', is_flag=True, help='Disable image compression. Overrides COMPRESSION_ENABLED from .env')
 @click.option('--model', type=click.Choice(list(AVAILABLE_MODELS.keys())), default=None,
-              help='Model to use for processing')
-@click.option('--verboseoff', is_flag=True, help='Disable verbose output (verbose is on by default)')
-def process(image_path: str, output_format: str, no_compress: bool, model: Optional[str] = None, verboseoff: bool = False):
-    """Process a single image"""
+              help='Model to use for processing. Overrides DEFAULT_MODEL from .env')
+@click.option('--verboseoff', is_flag=True, help='Disable verbose output. Overrides VERBOSE_OUTPUT from .env')
+@click.option('--api-key', help='Google API key. Overrides GOOGLE_API_KEY from .env')
+@click.option('--batch-size', type=int, help='Batch size for processing. Overrides DEFAULT_BATCH_SIZE from .env')
+@click.option('--output-dir', help='Output directory. Overrides OUTPUT_DIRECTORY from .env')
+@click.option('--auto-append', is_flag=True, help='Automatically append to existing CSV files. Overrides AUTO_APPEND_CSV from .env')
+def process(image_path: str, output_format: str, no_compress: bool, model: Optional[str] = None, 
+           verboseoff: bool = False, api_key: Optional[str] = None, batch_size: Optional[int] = None,
+           output_dir: Optional[str] = None, auto_append: Optional[bool] = None):
+    """Process a single image.
+    
+    All command line options override their corresponding environment variables from .env.
+    If an option is not specified, the value from .env will be used.
+    If neither is specified, built-in defaults will be used.
+    """
     try:
-        # Get API key from environment
-        api_key = os.getenv("GOOGLE_API_KEY")
+        # Get API key with priority order
+        api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            click.echo("Error: GOOGLE_API_KEY environment variable not set", err=True)
+            click.echo("Error: GOOGLE_API_KEY not provided via --api-key or in .env", err=True)
             sys.exit(1)
 
-        # Get verbose setting from environment or use default (True)
+        # Get verbose setting with priority order
         verbose = not verboseoff
+
+        # Get output format with priority order
+        output_format = output_format or os.getenv('DEFAULT_OUTPUT_FORMAT', 'csv')
+
+        # Get auto append setting with priority order
+        should_append = auto_append if auto_append is not None else os.getenv('AUTO_APPEND_CSV', 'false').lower() == 'true'
 
         # Initialize processor with model if specified
         processor = ImageProcessor(
             api_key=api_key,
             model=AVAILABLE_MODELS.get(model) if model else get_model_from_env(),
-            verbose_output=verbose
+            verbose_output=verbose,
+            batch_size=batch_size
         )
 
-        # Process image with compression by default
+        # Process image
         result = asyncio.run(processor.analyze_image(image_path))
         
         # Save output
-        output_base = os.path.splitext(image_path)[0]
+        output_base = os.path.join(output_dir or os.getenv('OUTPUT_DIRECTORY', '.'),
+                                 os.path.splitext(os.path.basename(image_path))[0])
         if output_format == 'csv':
             output_path = f"{output_base}_metadata.csv"
-            processor.save_to_csv([result], output_path)
+            # Check if file exists and we should append
+            if os.path.exists(output_path) and should_append:
+                if click.confirm(f"CSV file {output_path} exists. Do you want to append to it?", default=True):
+                    processor.save_to_csv([result], output_path, append=True)
+                else:
+                    processor.save_to_csv([result], output_path, append=False)
+            else:
+                processor.save_to_csv([result], output_path, append=False)
         else:
             output_path = f"{output_base}_metadata.xml"
             processor.save_to_xml([result], output_path)
@@ -99,31 +135,48 @@ def process(image_path: str, output_format: str, no_compress: bool, model: Optio
 
 @cli.command('bulk-process')
 @click.argument('input_path', type=click.Path(exists=True))
-@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
-              help='Output format for results')
+@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default=None,
+              help='Output format for results. Overrides DEFAULT_OUTPUT_FORMAT from .env')
 @click.option('--recursive', '-r', is_flag=True, help='Process subdirectories recursively')
-@click.option('--compress', '-c', is_flag=True, help='Compress images before processing')
+@click.option('--compress/--no-compress', default=None, help='Enable/disable compression. Overrides COMPRESSION_ENABLED from .env')
 @click.option('--model', '-m', type=click.Choice(['2-flash', '1.5-flash', '1.5-pro', 'pro']),
-              help='Model to use for processing')
-@click.option('--verboseoff', is_flag=True, help='Disable verbose output (verbose is on by default)')
+              help='Model to use for processing. Overrides DEFAULT_MODEL from .env')
+@click.option('--verboseoff', is_flag=True, help='Disable verbose output. Overrides VERBOSE_OUTPUT from .env')
+@click.option('--api-key', help='Google API key. Overrides GOOGLE_API_KEY from .env')
+@click.option('--batch-size', type=int, help='Batch size for processing. Overrides DEFAULT_BATCH_SIZE from .env')
+@click.option('--output-dir', help='Output directory. Overrides OUTPUT_DIRECTORY from .env')
+@click.option('--auto-append', is_flag=True, help='Automatically append to existing CSV files. Overrides AUTO_APPEND_CSV from .env')
 def bulk_process(input_path: str, output_format: str, recursive: bool, compress: bool, 
-                model: Optional[str] = None, verboseoff: bool = False):
-    """Process multiple images in a directory."""
+                model: Optional[str] = None, verboseoff: bool = False, api_key: Optional[str] = None,
+                batch_size: Optional[int] = None, output_dir: Optional[str] = None, auto_append: Optional[bool] = None):
+    """Process multiple images in a directory.
+    
+    All command line options override their corresponding environment variables from .env.
+    If an option is not specified, the value from .env will be used.
+    If neither is specified, built-in defaults will be used.
+    """
     try:
-        # Get API key from environment
-        api_key = os.getenv("GOOGLE_API_KEY")
+        # Get API key with priority order
+        api_key = api_key or os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            click.echo("Error: GOOGLE_API_KEY environment variable not set", err=True)
+            click.echo("Error: GOOGLE_API_KEY not provided via --api-key or in .env", err=True)
             sys.exit(1)
-            
-        # Get verbose setting from environment or use default (True)
-        verbose = not verboseoff and os.getenv("VERBOSE_OUTPUT", "true").lower() != "false"
 
-        # Initialize processor
+        # Get verbose setting with priority order
+        verbose = not verboseoff
+
+        # Get output format with priority order
+        output_format = output_format or os.getenv('DEFAULT_OUTPUT_FORMAT', 'csv')
+
+        # Get auto append setting with priority order
+        should_append = auto_append if auto_append is not None else os.getenv('AUTO_APPEND_CSV', 'false').lower() == 'true'
+
+        # Initialize processor with model if specified
         processor = ImageProcessor(
             api_key=api_key,
             model=AVAILABLE_MODELS.get(model) if model else get_model_from_env(),
-            verbose_output=verbose
+            verbose_output=verbose,
+            batch_size=batch_size
         )
 
         # Get all image files
@@ -144,10 +197,17 @@ def bulk_process(input_path: str, output_format: str, recursive: bool, compress:
         results = asyncio.run(processor.process_batch(image_files))
         
         # Save results
-        output_dir = os.path.dirname(input_path)
+        output_dir = output_dir or os.getenv('OUTPUT_DIRECTORY', os.path.dirname(input_path))
         if output_format == 'csv':
             output_path = os.path.join(output_dir, 'results.csv')
-            processor.save_to_csv(results, output_path)
+            # Check if file exists and we should append
+            if os.path.exists(output_path) and should_append:
+                if click.confirm(f"CSV file {output_path} exists. Do you want to append to it?", default=True):
+                    processor.save_to_csv(results, output_path, append=True)
+                else:
+                    processor.save_to_csv(results, output_path, append=False)
+            else:
+                processor.save_to_csv(results, output_path, append=False)
         else:
             output_path = os.path.join(output_dir, 'results.xml')
             processor.save_to_xml(results, output_path)
@@ -163,7 +223,7 @@ def bulk_process(input_path: str, output_format: str, recursive: bool, compress:
 def version():
     """Show version information"""
     try:
-        click.echo("Image Sense v1.0.0")
+        click.echo("Image Sense v0.1.1")
         return 0
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
