@@ -1,0 +1,55 @@
+INFO:src.core.image_processor:ExifTool version 13.10 found at /opt/homebrew/bin/exiftool
+INFO:src.core.image_utils:Compressed image saved to: /var/folders/g4/t50hjvlj7dj9b70npwg8h3tw0000gn/T/llm_image_hjfotyet/6957921396.jpg_exif1_compressed.jpg
+INFO:src.core.image_utils:Compressed image saved to: /var/folders/g4/t50hjvlj7dj9b70npwg8h3tw0000gn/T/llm_image_jcw6uydk/6957921397.jpg_exif1_compressed.jpg
+```json
+{
+    "description": "A two-story brick house with a dark roof, prominent dormer windows, and a teal-colored front door is showcased from two slightly different angles. The house sits on a lawn with trees and landscaping. The 
+first image shows a closer view of the right side of the house, while the second image shows a wider view of the left side and the surrounding yard.",
+    "keywords": ["house", "brick house", "dormer windows", "teal door", "landscaping", "lawn", "trees", "architecture", "exterior", "residential", 
+"home", "daylight", "clear sky", "yard", "grass", "bush", "sidewalk", "black mulch", "fence", "light fixture", "satellite dish"],
+   "technical_details": {
+        "format": "JPEG",
+        "dimensions": "Unknown, but likely high resolution",
+        "color_space": "RGB"
+    },
+    "visual_elements": [
+      "red brick facade",
+      "dark gray roof",
+      "multiple dormer windows",
+      "teal front door",
+      "white window trim",
+      "manicured lawn",
+      "landscaped bushes and trees",
+      "black mulch beds",
+      "a small brick chimney",
+      "paved path",
+       "fenced back area",
+       "outdoor lighting fixtures"
+    ],
+    "composition": [
+      "low angle",
+      "side view of house",
+      "leading lines from the pathway",
+      "rule of thirds in the wider shot"
+    ],
+    "mood": "peaceful",
+     "use_cases": [
+      "real estate listings",
+       "architectural portfolios",
+      "home improvement websites",
+      "landscape design inspiration",
+      "stock photography",
+      "blog post or article illustration"
+    ],
+    "suggested_filename": "brick_house_with_dormers.jpg"
+}
+```INFO:src.core.image_processor:Saved results to CSV: output/results.csv
+
+Results saved to output/results.csv
+
+Processing complete!
+Successfully processed: 0 images
+Failed to process: 2 images
+   Compressing images...          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━                  100%   0:00:00  
+⠋  Processing images...                                                                       0%   -:--:--  
+⠋  Writing EXIF data...                                                                       0%   -:--:--  

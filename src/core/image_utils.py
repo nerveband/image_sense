@@ -125,87 +125,68 @@ def process_image_batch(file_paths: List[str]) -> List[Tuple[str, bool, Optional
             logger.warning(f"Invalid image {file_path}: {error}")
     return results
 
-def compress_image(
-    file_path: str,
-    output_path: Optional[str] = None,
-    max_dimension: Optional[int] = None,
-    quality: int = 85,
-    optimize: bool = True
-) -> str:
-    """
-    Compress and optionally resize an image while maintaining aspect ratio.
-    
-    Args:
-        file_path: Path to the input image file
-        output_path: Path to save the compressed image (if None, overwrites original)
-        max_dimension: Maximum width or height (maintains aspect ratio)
-        quality: JPEG quality (1-100, higher is better quality but larger size)
-        optimize: Whether to optimize the output file size
-        
-    Returns:
-        str: Path to the compressed image
-        
-    Raises:
-        ImageCompressionError: If compression fails
-    """
+def compress_image(input_path: str, output_path: str, max_dimension: int = 1920, quality: int = 85) -> str:
+    """Compress an image while maintaining aspect ratio."""
     try:
-        with load_image(file_path) as img:
-            # Convert to RGB if necessary (for PNG with transparency)
-            if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'P':
-                    img = img.convert('RGBA')
-                background.paste(img, mask=img.split()[-1])
-                img = background
-
-            # Resize if max_dimension is specified
-            if max_dimension:
-                width, height = img.size
-                if width > max_dimension or height > max_dimension:
-                    if width > height:
-                        new_width = max_dimension
-                        new_height = int(height * (max_dimension / width))
-                    else:
-                        new_height = max_dimension
-                        new_width = int(width * (max_dimension / height))
-                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-            # Determine output path
-            if not output_path:
-                output_path = file_path
-
-            # Save with compression
-            img.save(
-                output_path,
-                'JPEG',
-                quality=quality,
-                optimize=optimize,
-                progressive=True
-            )
+        # Validate input
+        if not os.path.exists(input_path):
+            raise ImageValidationError(f"Input file not found: {input_path}")
             
+        # Create output directory if it doesn't exist
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir)
+            except Exception as e:
+                raise ImageValidationError(f"Failed to create output directory: {str(e)}")
+
+        # Open and validate image
+        try:
+            img = Image.open(input_path)
+        except Exception as e:
+            raise ImageValidationError(f"Failed to open image: {str(e)}")
+
+        # Calculate new dimensions
+        width, height = img.size
+        if max(width, height) > max_dimension:
+            if width > height:
+                new_width = max_dimension
+                new_height = int(height * (max_dimension / width))
+            else:
+                new_height = max_dimension
+                new_width = int(width * (max_dimension / height))
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Save compressed image
+        try:
+            img.save(output_path, 'JPEG', quality=quality, optimize=True)
             logger.info(f"Compressed image saved to: {output_path}")
             return output_path
+        except Exception as e:
+            raise ImageCompressionError(f"Failed to save compressed image: {str(e)}")
 
+    except (ImageValidationError, ImageCompressionError) as e:
+        logger.error(f"Error compressing image: {str(e)}")
+        raise
     except Exception as e:
+        logger.error(f"Unexpected error compressing image: {str(e)}")
         raise ImageCompressionError(f"Failed to compress image: {str(e)}")
 
 def compress_image_batch(
     file_paths: List[str],
     output_dir: Optional[str] = None,
     max_dimension: Optional[int] = None,
-    quality: int = 85,
-    optimize: bool = True
+    quality: int = 85
 ) -> List[Tuple[str, bool, Optional[str]]]:
     """
     Compress a batch of images.
-    
+
     Args:
         file_paths: List of paths to image files
         output_dir: Directory to save compressed images (if None, overwrites originals)
         max_dimension: Maximum width or height (maintains aspect ratio)
         quality: JPEG quality (1-100)
-        optimize: Whether to optimize the output file size
-        
+
     Returns:
         List[Tuple[str, bool, str]]: List of (file_path, success, error_message/output_path)
     """
@@ -218,21 +199,18 @@ def compress_image_batch(
                 filename = os.path.basename(file_path)
                 base, _ = os.path.splitext(filename)
                 output_path = os.path.join(output_dir, f"{base}_compressed.jpg")
-            
+
             compressed_path = compress_image(
                 file_path,
                 output_path,
-                max_dimension,
-                quality,
-                optimize
+                max_dimension=max_dimension,
+                quality=quality
             )
             results.append((file_path, True, compressed_path))
-            
-        except (ImageValidationError, ImageCompressionError) as e:
+        except Exception as e:
+            logger.error(f"Error compressing {file_path}: {str(e)}")
             results.append((file_path, False, str(e)))
-            logger.error(f"Failed to compress {file_path}: {str(e)}")
-            
-    return results 
+    return results
 
 def create_llm_optimized_copy(
     file_path: str,
@@ -241,54 +219,41 @@ def create_llm_optimized_copy(
 ) -> Tuple[str, str]:
     """
     Creates a temporary compressed copy of an image optimized for LLM processing.
-    
+
     Args:
         file_path: Path to the input image file
         max_dimension: Maximum width or height (maintains aspect ratio)
         quality: JPEG quality (1-100)
-        
+
     Returns:
         Tuple[str, str]: (temp_dir_path, compressed_image_path)
-        
+
     Raises:
         ImageCompressionError: If compression fails
     """
     try:
         # Create temporary directory
         temp_dir = tempfile.mkdtemp(prefix='llm_image_')
-        
+
         # Create compressed copy
         filename = os.path.basename(file_path)
         base, _ = os.path.splitext(filename)
         compressed_path = os.path.join(temp_dir, f"{base}_compressed.jpg")
-        
-        compress_image(
+
+        compressed_path = compress_image(
             file_path,
             compressed_path,
             max_dimension=max_dimension,
-            quality=quality,
-            optimize=True
+            quality=quality
         )
-        
+
         return temp_dir, compressed_path
-        
+
     except Exception as e:
         # Clean up on error
         if 'temp_dir' in locals():
             shutil.rmtree(temp_dir, ignore_errors=True)
         raise ImageCompressionError(f"Failed to create LLM-optimized copy: {str(e)}")
-
-def cleanup_llm_optimized_copy(temp_dir: str):
-    """
-    Removes the temporary directory and its contents.
-    
-    Args:
-        temp_dir: Path to the temporary directory to remove
-    """
-    try:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    except Exception as e:
-        logger.warning(f"Failed to clean up temporary directory {temp_dir}: {str(e)}")
 
 def create_llm_optimized_batch(
     file_paths: List[str],
@@ -313,34 +278,40 @@ def create_llm_optimized_batch(
         # Create temporary directory
         temp_dir = tempfile.mkdtemp(prefix='llm_batch_')
         results = []
-        
+        errors = []
+
+        # Process each image
         for file_path in file_paths:
             try:
+                # Create compressed copy
                 filename = os.path.basename(file_path)
                 base, _ = os.path.splitext(filename)
                 compressed_path = os.path.join(temp_dir, f"{base}_compressed.jpg")
                 
-                compress_image(
+                compressed_path = compress_image(
                     file_path,
                     compressed_path,
                     max_dimension=max_dimension,
-                    quality=quality,
-                    optimize=True
+                    quality=quality
                 )
                 
                 results.append((file_path, compressed_path))
-                
-            except (ImageValidationError, ImageCompressionError) as e:
+            except Exception as e:
                 logger.error(f"Failed to compress {file_path}: {str(e)}")
-                # Continue with other images even if one fails
-                
+                errors.append(str(e))
+
+        if errors:
+            # Clean up on error
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise ImageCompressionError(f"Failed to compress some images: {'; '.join(errors)}")
+
         return temp_dir, results
-        
+
     except Exception as e:
         # Clean up on error
         if 'temp_dir' in locals():
             shutil.rmtree(temp_dir, ignore_errors=True)
-        raise ImageCompressionError(f"Failed to create LLM-optimized batch: {str(e)}") 
+        raise ImageCompressionError(f"Failed to process batch: {str(e)}")
 
 def validate_image_path(path: str) -> Optional[str]:
     """

@@ -1,0 +1,71 @@
+2024-12-25 19:29:50,038 - asyncio - DEBUG - Using selector: KqueueSelector
+2024-12-25 19:29:50,111 - src.core.image_processor - INFO - ExifTool version 13.10 found at /opt/homebrew/bin/exiftool
+2024-12-25 19:29:50,183 - src.core.image_utils - INFO - Compressed image saved to: /var/folders/g4/t50hjvlj7dj9b70npwg8h3tw0000gn/T/llm_image_g76zfxdo/6957921396.jpg_exif1_compressed.jpg
+2024-12-25 19:29:50,243 - src.core.image_utils - INFO - Compressed image saved to: /var/folders/g4/t50hjvlj7dj9b70npwg8h3tw0000gn/T/llm_image_8x62ztui/6957921397.jpg_exif1_compressed.jpg
+2024-12-25 19:29:50,247 - grpc._cython.cygrpc - DEBUG - Using AsyncIOEngine.POLLER as I/O engine
+```json
+{
+    "description": "Two images showing a large, single-story brick house with multiple dormer windows. The house has a dark roof, a teal front door, and is surrounded by landscaping including trees, shrubs, a path and a lawn. The first 
+image shows the house from a slightly angled perspective, while the second image is taken from a more head-on perspective with a prominent flowering 
+tree in the foreground.",
+    "keywords": [
+        "house",
+        "brick",
+        "dormer windows",
+        "teal door",
+        "landscaping",
+        "trees",
+        "shrubs",
+        "lawn",
+        "path",
+        "residential",
+        "exterior",
+         "daytime",
+        "yard",
+         "clear sky",
+        "flowering tree"
+    ],
+    "technical_details": {
+        "format": "JPEG",
+        "dimensions": "Both images are roughly the same dimension 1200x800",
+        "color_space": "sRGB"
+    },
+    "visual_elements": [
+        "red brick facade",
+        "dark roof with dormers",
+        "teal front door",
+        "white window frames",
+        "manicured lawn",
+        "landscaped path",
+        "mature trees and shrubs",
+        "clear blue sky",
+         "flowering tree"
+    ],
+    "composition": [
+       "leading lines of the path",
+       "perspective lines of the roof",
+        "framing with foliage (first image)",
+        "foreground element (flowering tree in second image)",
+        "slightly low angle"
+    ],
+    "mood": "peaceful, serene, established, welcoming",
+     "use_cases": [
+        "real estate listings",
+        "home improvement catalogs",
+        "architectural portfolios",
+        "landscaping websites",
+        "lifestyle blogs",
+        "stock photography"
+    ],
+    "suggested_filename": "brick_house_dormers_landscaping.jpg"
+}
+```2024-12-25 19:29:54,375 - src.core.image_processor - INFO - Saved results to CSV: output/results.csv
+
+Results saved to output/results.csv
+
+Processing complete!
+Successfully processed: 0 images
+Failed to process: 2 images
+   Compressing images...          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━                  100%   0:00:00  
+⠸  Processing images...                                                                       0%   -:--:--  
+⠸  Writing EXIF data...                                                                       0%   -:--:--  

@@ -1,0 +1,53 @@
+```json
+{
+    "description": "A two-story brick house with multiple dormer windows is presented in two slightly different perspectives. The house has a dark shingled roof, a bright teal front door, and is surrounded by trees and a well-kept lawn. The sunlight
+indicates a daytime setting, likely late morning or early afternoon. One image shows the front of the house at a slight angle and the other 
+image shows a more head-on view of the front, showcasing an adjacent flowering tree.",
+    "keywords": ["brick house", "dormer windows", "teal door", "house exterior", "residential architecture",
+"yard", "landscaping", "trees", "daytime", "sunny", "shingled roof", "well-kept lawn", "flowering tree"],
+    "technical_details": {
+        "format": "JPEG",
+        "dimensions": "Not available from provided images",
+        "color_space": "sRGB"
+    },
+    "visual_elements": [
+        "red brick walls",
+         "dormer windows",
+        "teal front door",
+         "dark roof shingles",
+        "green lawn",
+         "trees",
+          "black mulch",
+         "pathway stones",
+        "window details",
+        "outdoor lighting",
+        "flowering tree (second image)"
+       
+    ],
+    "composition": [
+      "horizontal orientation",
+      "use of natural framing with trees",
+      "rule of thirds positioning (both images)",
+     "perspective view with vanishing point",
+    "leading lines from path and shadow"
+     ],
+    "mood": "peaceful, serene, pleasant, domestic, welcoming",
+    "use_cases": [
+        "real estate marketing",
+        "architectural showcase",
+        "home improvement magazines",
+        "landscaping design examples",
+         "property valuation",
+          "stock photography for suburban settings"
+    ],
+    "suggested_filename": "brick_house_dormer_windows.jpg"
+}
+```
+Results saved to output/results.csv
+
+Processing complete!
+Successfully processed: 0 images
+Failed to process: 2 images
+   Compressing images...          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━                  100%   0:00:00  
+⠹  Processing images...                                                                       0%   -:--:--  
+⠹  Writing EXIF data...                                                                       0%   -:--:--  

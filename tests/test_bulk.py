@@ -44,11 +44,15 @@ def test_bulk_recursive(runner, test_images_dir):
 
 def test_bulk_empty_directory(runner, tmp_path):
     """Test bulk processing with empty directory"""
+    # Create empty directory
+    os.makedirs(tmp_path, exist_ok=True)
+    
     result = runner.invoke(cli, [
         'bulk-process',
         str(tmp_path)
     ])
-    assert result.exit_code == 1
+    
+    assert result.exit_code == 0  # Should exit gracefully
     assert "No images found in directory" in result.output
 
 if __name__ == "__main__":

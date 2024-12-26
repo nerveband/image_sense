@@ -1,216 +1,184 @@
 """
-Metadata handler for managing EXIF data using exiftool.
+Metadata handler for managing EXIF data using pyexiftool.
 """
 import os
 import sys
 import json
-import subprocess
 import logging
 from typing import Dict, Any, List, Optional, Union
 from pathlib import Path
+import exiftool
+from ..core.config import config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class MetadataError(Exception):
-    """Custom exception for metadata-related errors."""
+    """Custom exception for metadata handling errors"""
     pass
 
-class ExifTool:
-    """
-    A class to handle interaction with ExifTool for reading and writing image metadata.
-    """
+class MetadataHandler:
+    """Handler for reading and writing image metadata."""
+
     def __init__(self, exiftool_path: Optional[str] = None):
-        """
-        Initialize ExifTool handler.
-        
-        Args:
-            exiftool_path: Optional path to exiftool executable
-        """
-        self.exiftool_path = self._find_exiftool(exiftool_path)
-        self._verify_exiftool()
+        """Initialize the metadata handler."""
+        self.exiftool_path = exiftool_path
+        self.et = exiftool.ExifToolHelper(executable=exiftool_path)
 
-    def _find_exiftool(self, custom_path: Optional[str] = None) -> str:
-        """
-        Find the exiftool executable.
-        
-        Args:
-            custom_path: Optional custom path to exiftool
-            
-        Returns:
-            str: Path to exiftool executable
-        """
-        if custom_path and os.path.isfile(custom_path):
-            return custom_path
-
-        # Check system PATH first
-        if sys.platform == 'win32':
-            exiftool_name = 'exiftool.exe'
-        else:
-            exiftool_name = 'exiftool'
-
-        for path in os.environ.get('PATH', '').split(os.pathsep):
-            exe_path = os.path.join(path, exiftool_name)
-            if os.path.isfile(exe_path):
-                return exe_path
-
-        # Fall back to bundled exiftool if system one not found
-        bundled_path = self._get_bundled_exiftool_path()
-        if bundled_path:
-            return bundled_path
-
-        raise MetadataError("ExifTool not found. Please ensure it's installed or bundled correctly.")
-
-    def _get_bundled_exiftool_path(self) -> Optional[str]:
-        """
-        Get the path to the bundled exiftool executable.
-        """
-        # Determine platform-specific executable name
-        if sys.platform == 'win32':
-            exe_name = 'exiftool.exe'
-        elif sys.platform == 'darwin':
-            exe_name = 'exiftool'
-        else:  # Linux/Unix
-            exe_name = 'exiftool'
-
-        # Check relative to the application root
-        bundled_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            'resources',
-            'exiftool',
-            exe_name
-        )
-
-        if os.path.isfile(bundled_path):
-            # Ensure the bundled executable has correct permissions
-            if sys.platform != 'win32':
-                try:
-                    os.chmod(bundled_path, 0o755)
-                except OSError as e:
-                    logger.warning(f"Failed to set executable permissions: {e}")
-            return bundled_path
-
-        return None
-
-    def _verify_exiftool(self):
-        """
-        Verify that exiftool is working correctly.
-        """
+    def read_metadata(self, image_path: Union[str, Path]) -> Dict[str, Any]:
+        """Read metadata from an image file."""
         try:
-            result = subprocess.run(
-                [self.exiftool_path, '-ver'],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            logger.info(f"ExifTool version {result.stdout.strip()} found at {self.exiftool_path}")
-        except subprocess.CalledProcessError as e:
-            raise MetadataError(f"Failed to verify ExifTool: {str(e)}")
-
-    def read_metadata(self, image_path: Union[str, Path], 
-                     tags: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Read metadata from an image file.
-        
-        Args:
-            image_path: Path to the image file
-            tags: Optional list of specific tags to read
+            # Convert path to string
+            image_path = str(Path(image_path).resolve())
+            metadata = self.et.get_metadata(image_path)
             
-        Returns:
-            Dict containing the metadata
-        """
-        cmd = [self.exiftool_path, '-j']
-        if tags:
-            cmd.extend([f'-{tag}' for tag in tags])
-        cmd.append(str(image_path))
-
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            metadata = json.loads(result.stdout)[0]  # ExifTool returns a list with one item
-            return metadata
-        except subprocess.CalledProcessError as e:
-            raise MetadataError(f"Failed to read metadata: {str(e)}")
-        except json.JSONDecodeError as e:
-            raise MetadataError(f"Failed to parse metadata: {str(e)}")
+            if metadata:
+                return {
+                    'success': True,
+                    'metadata': metadata[0] if isinstance(metadata, list) else metadata,
+                    'original_path': image_path,
+                    'original_filename': os.path.basename(image_path)
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'No metadata found',
+                    'original_path': image_path,
+                    'original_filename': os.path.basename(image_path)
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'original_path': str(image_path),
+                'original_filename': os.path.basename(str(image_path))
+            }
 
     def write_metadata(self, image_path: Union[str, Path], metadata: Dict[str, Any], backup: bool = True, duplicate: bool = False) -> Dict[str, Any]:
-        """
-        Write metadata to an image file.
-        
-        Args:
-            image_path: Path to the image file
-            metadata: Dictionary of metadata to write
-            backup: Whether to create a backup of the original file
-            duplicate: Whether to create a duplicate file before modifying
-            
-        Returns:
-            Dict containing the operation results including paths
-        """
-        image_path = Path(image_path)
-        result = {
-            'original_path': str(image_path),
-            'original_filename': image_path.name,
-            'new_filename': None,
-            'modified_path': None
-        }
-
+        """Write metadata to an image file."""
         try:
-            if duplicate:
-                # Create duplicate with _modified suffix before extension
-                stem = image_path.stem
-                suffix = image_path.suffix
-                duplicate_path = image_path.parent / f"{stem}_modified{suffix}"
-                import shutil
-                shutil.copy2(image_path, duplicate_path)
-                image_path = duplicate_path
-                result['modified_path'] = str(duplicate_path)
+            # Convert path to string
+            image_path = str(Path(image_path).resolve())
+            
+            # Prepare metadata tags
+            tags = {}
+            
+            # Map structured fields to EXIF/IPTC/XMP tags
+            if 'description' in metadata:
+                tags['-IPTC:Caption-Abstract'] = metadata['description']
+                tags['-XMP:Description'] = metadata['description']
+                tags['-EXIF:ImageDescription'] = metadata['description']
+            
+            if 'keywords' in metadata:
+                if isinstance(metadata['keywords'], list):
+                    tags['-IPTC:Keywords'] = metadata['keywords']
+                    tags['-XMP:Subject'] = metadata['keywords']
+                else:
+                    tags['-IPTC:Keywords'] = [str(metadata['keywords'])]
+                    tags['-XMP:Subject'] = [str(metadata['keywords'])]
+            
+            if 'visual_elements' in metadata:
+                if isinstance(metadata['visual_elements'], list):
+                    tags['-IPTC:Subject'] = metadata['visual_elements']
+                else:
+                    tags['-IPTC:Subject'] = [str(metadata['visual_elements'])]
+            
+            if 'composition' in metadata:
+                if isinstance(metadata['composition'], list):
+                    tags['-IPTC:Notes'] = '\n'.join(str(c) for c in metadata['composition'])
+                else:
+                    tags['-IPTC:Notes'] = str(metadata['composition'])
+            
+            if 'mood' in metadata:
+                tags['-IPTC:Category'] = str(metadata['mood'])
+                tags['-XMP:Mood'] = str(metadata['mood'])
+            
+            if 'use_cases' in metadata:
+                if isinstance(metadata['use_cases'], list):
+                    tags['-XMP:Usage'] = metadata['use_cases']
+                else:
+                    tags['-XMP:Usage'] = [str(metadata['use_cases'])]
+            
+            # Add technical details if present
+            if 'technical_details' in metadata and isinstance(metadata['technical_details'], dict):
+                tech = metadata['technical_details']
+                if 'format' in tech:
+                    tags['-File:FileType'] = str(tech['format'])
+                if 'dimensions' in tech:
+                    tags['-File:ImageSize'] = str(tech['dimensions'])
+                if 'color_space' in tech:
+                    tags['-File:ColorSpace'] = str(tech['color_space'])
+            
+            # Add software tag
+            tags['-XMP:Software'] = 'Image Sense AI Processor'
+            
+            # Write metadata using exiftool
+            try:
+                # Prepare command parameters
+                params = []
+                if not backup:
+                    params.append('-overwrite_original')
+                
+                # Convert tags to exiftool format
+                for tag, value in tags.items():
+                    if isinstance(value, list):
+                        # Handle list values
+                        for item in value:
+                            if item:  # Only add non-empty values
+                                params.append(f"{tag}={str(item)}")
+                    else:
+                        # Handle single values
+                        if value:  # Only add non-empty values
+                            params.append(f"{tag}={str(value)}")
+                
+                if not params:
+                    return {
+                        'success': False,
+                        'error': 'No valid metadata tags to write',
+                        'original_path': image_path,
+                        'original_filename': os.path.basename(image_path)
+                    }
+                
+                # Execute exiftool command
+                self.et.execute(*params, image_path)
+                
+                # Verify the metadata was written
+                verify_result = self.read_metadata(image_path)
+                
+                if verify_result.get('success', False):
+                    return {
+                        'success': True,
+                        'original_path': image_path,
+                        'original_filename': os.path.basename(image_path),
+                        'modified_path': image_path
+                    }
+                
+                return {
+                    'success': False,
+                    'error': 'Failed to verify metadata was written',
+                    'original_path': image_path,
+                    'original_filename': os.path.basename(image_path)
+                }
+                
+            except Exception as e:
+                return {
+                    'success': False,
+                    'error': f'Failed to write metadata: {str(e)}',
+                    'original_path': image_path,
+                    'original_filename': os.path.basename(image_path)
+                }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Error in write_metadata: {str(e)}',
+                'original_path': str(image_path),
+                'original_filename': os.path.basename(str(image_path))
+            }
 
-            cmd = [self.exiftool_path]
-            if not backup:
-                cmd.append('-overwrite_original')
-
-            # Check if rename is requested
-            new_name = metadata.pop('NewFileName', None)
-            if new_name:
-                cmd.extend(['-FileName=' + new_name])
-                result['new_filename'] = new_name
-
-            # Convert metadata dict to ExifTool arguments, properly escaping values
-            for tag, value in metadata.items():
-                if value is not None:
-                    # Skip internal flags
-                    if tag.lower() in ['path', 'success']:
-                        continue
-                    # Handle list values
-                    if isinstance(value, (list, tuple)):
-                        value = ', '.join(str(v) for v in value)
-                    # Escape special characters in the value
-                    value = str(value).replace('"', '\\"')
-                    cmd.extend([f'-{tag}="{value}"'])
-
-            cmd.append(str(image_path))
-
-            result_run = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                shell=False
-            )
-            if result_run.stderr:
-                logger.warning(f"ExifTool warning: {result_run.stderr}")
-
-            return result
-
-        except subprocess.CalledProcessError as e:
-            error_msg = f"Failed to write metadata: {str(e)}"
-            if e.stderr:
-                error_msg += f"\nExifTool error: {e.stderr}"
-            raise MetadataError(error_msg)
-
-    def copy_metadata(self, source_path: Union[str, Path],
-                     target_path: Union[str, Path],
+    def copy_metadata(self, source_path: Union[str, Path], target_path: Union[str, Path], 
                      tags: Optional[List[str]] = None) -> None:
         """
         Copy metadata from one image to another.
@@ -220,45 +188,50 @@ class ExifTool:
             target_path: Path to the target image
             tags: Optional list of specific tags to copy
         """
-        cmd = [self.exiftool_path, '-overwrite_original']
-        if tags:
-            cmd.extend([f'-{tag}' for tag in tags])
-        cmd.extend(['-TagsFromFile', str(source_path), str(target_path)])
-
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
+            source_path = str(Path(source_path).resolve())
+            target_path = str(Path(target_path).resolve())
+
+            params = ['-overwrite_original', '-TagsFromFile', source_path]
+            if tags:
+                # Map internal tag names to ExifTool tag names
+                exif_tags = [self.TAG_MAP.get(tag, tag) for tag in tags]
+                params.extend(exif_tags)
+
+            self.et.execute(*params, target_path)
+
+        except Exception as e:
             raise MetadataError(f"Failed to copy metadata: {str(e)}")
 
-    def remove_metadata(self, image_path: Union[str, Path],
-                       tags: Optional[List[str]] = None,
+    def remove_metadata(self, image_path: Union[str, Path], tags: Optional[List[str]] = None, 
                        backup: bool = True) -> None:
         """
         Remove metadata from an image file.
         
         Args:
             image_path: Path to the image file
-            tags: Optional list of specific tags to remove (removes all if None)
+            tags: Optional list of specific tags to remove
             backup: Whether to create a backup of the original file
         """
-        cmd = [self.exiftool_path]
-        if not backup:
-            cmd.append('-overwrite_original')
-
-        if tags:
-            cmd.extend([f'-{tag}=' for tag in tags])
-        else:
-            cmd.append('-all=')  # Remove all metadata
-
-        cmd.append(str(image_path))
-
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
+            image_path = str(Path(image_path).resolve())
+            
+            params = []
+            if not backup:
+                params.append('-overwrite_original')
+
+            if tags:
+                # Map internal tag names to ExifTool tag names and add = to clear them
+                exif_tags = {self.TAG_MAP.get(tag, tag).lstrip('-'): '' for tag in tags}
+                self.et.set_tags(image_path, exif_tags, params=params)
+            else:
+                # Remove all metadata
+                self.et.execute('-all=', '-overwrite_original' if not backup else '', image_path)
+
+        except Exception as e:
             raise MetadataError(f"Failed to remove metadata: {str(e)}")
 
-    def process_batch(self, image_paths: List[Union[str, Path]], 
-                     operation: str,
+    def process_batch(self, image_paths: List[Union[str, Path]], operation: str,
                      metadata: Optional[Dict[str, Any]] = None,
                      tags: Optional[List[str]] = None,
                      output_format: str = 'csv',
@@ -266,190 +239,238 @@ class ExifTool:
                      backup: bool = True,
                      duplicate: bool = False) -> List[Dict[str, Any]]:
         """
-        Process a batch of images with the same operation and save structured output.
+        Process a batch of images with the same operation.
         
         Args:
             image_paths: List of paths to image files
             operation: Operation to perform ('read', 'write', 'remove')
-            metadata: List of metadata dictionaries or single metadata dict
+            metadata: Metadata to write (for 'write' operation)
             tags: Optional list of specific tags
-            output_format: Format to save results ('csv' or 'xml')
-            output_path: Path to save output file
-            backup: Whether to create backups (for 'write' and 'remove' operations)
+            output_format: Format for saving results ('csv' or 'xml')
+            output_path: Path to save results
+            backup: Whether to create backups
             duplicate: Whether to create duplicates before modifying
             
         Returns:
-            List of results (for 'read' operation) or empty list (for other operations)
+            List of results
         """
         results = []
         
-        # Handle metadata as list or single dict
-        if isinstance(metadata, list):
-            metadata_list = metadata
-        else:
-            metadata_list = [metadata] * len(image_paths) if metadata else []
+        # Convert paths to absolute paths and store original paths
+        processed_paths = []
+        for path in image_paths:
+            path = Path(path).resolve()
+            processed_paths.append({
+                'original_path': str(path),
+                'original_filename': path.name,
+                'new_filename': None,
+                'modified_path': None,
+                'success': False
+            })
 
-        for i, path in enumerate(image_paths):
-            try:
-                # Convert path to Path object to handle spaces properly
-                path = Path(path)
-                if operation == 'read':
-                    result = self.read_metadata(path, tags)
+        try:
+            if operation == 'read':
+                # Read metadata from all files at once
+                batch_results = self.et.get_metadata([str(p) for p in processed_paths])
+                for i, metadata_result in enumerate(batch_results):
+                    result = {
+                        **processed_paths[i],
+                        'success': True,
+                        'metadata': metadata_result
+                    }
+                    
+                    # Extract metadata fields
+                    result.update(self._extract_metadata_fields(metadata_result))
                     results.append(result)
-                elif operation == 'write' and metadata_list:
-                    # Get metadata for this image
-                    img_metadata = metadata_list[i]
-                    if img_metadata.get('success', True):  # Only write if successful
-                        # Generate suggested filename if not already present
-                        if 'suggested_filename' not in img_metadata:
-                            img_metadata['suggested_filename'] = self._generate_suggested_filename(
-                                path, img_metadata
-                            )
-                        
-                        # Convert structured data to flat metadata
-                        exif_metadata = {
-                            'Description': img_metadata.get('description', ''),
-                            'Keywords': img_metadata.get('keywords', []),
-                            'Technical': json.dumps(img_metadata.get('technical_details', {})),
-                            'VisualElements': img_metadata.get('visual_elements', []),
-                            'Composition': img_metadata.get('composition', []),
-                            'Mood': img_metadata.get('mood', ''),
-                            'UseCases': img_metadata.get('use_cases', []),
-                            'Software': 'Image Sense AI Processor',
-                            'SuggestedFileName': img_metadata['suggested_filename']
-                        }
-                        
-                        # Add rename if requested
-                        if 'new_filename' in img_metadata:
-                            exif_metadata['NewFileName'] = img_metadata['new_filename']
-                        
-                        # Write metadata and get operation results
-                        write_result = self.write_metadata(path, exif_metadata, backup, duplicate)
-                        
-                        # Update metadata with file information
-                        img_metadata.update({
-                            'original_path': write_result['original_path'],
-                            'original_filename': write_result['original_filename'],
-                            'new_filename': write_result['new_filename'],
-                            'modified_path': write_result['modified_path']
+
+            elif operation == 'write' and metadata:
+                # Process each file individually for write operations
+                for i, path_info in enumerate(processed_paths):
+                    result = self.write_metadata(
+                        path_info['original_path'],
+                        metadata,
+                        backup,
+                        duplicate
+                    )
+                    # Merge with original path info and metadata
+                    result.update(path_info)
+                    if metadata:
+                        result.update(self._extract_metadata_fields(metadata))
+                    results.append(result)
+
+            elif operation == 'remove':
+                # Remove metadata from all files
+                for i, path_info in enumerate(processed_paths):
+                    try:
+                        self.remove_metadata(path_info['original_path'], tags, backup)
+                        results.append({
+                            **path_info,
+                            'success': True
                         })
-                        
-                        results.append(img_metadata)
-                elif operation == 'remove':
-                    self.remove_metadata(path, tags, backup)
-                logger.info(f"Successfully processed {path}")
-            except Exception as e:
-                logger.error(f"Failed to process {path}: {str(e)}")
-                results.append({
-                    'error': str(e),
-                    'path': str(path),
-                    'original_filename': path.name,
-                    'success': False
-                })
+                    except Exception as e:
+                        results.append({
+                            **path_info,
+                            'success': False,
+                            'error': str(e)
+                        })
 
-        # Save structured output if path provided
-        if output_path and metadata_list:
-            if output_format == 'csv':
-                self._save_to_csv(metadata_list, output_path)
-            elif output_format == 'xml':
-                self._save_to_xml(metadata_list, output_path)
+            # Save results if output path provided
+            if output_path:
+                if output_format == 'csv':
+                    self._save_to_csv(results, output_path)
+                elif output_format == 'xml':
+                    self._save_to_xml(results, output_path)
 
-        return results
+            return results
 
-    def _generate_suggested_filename(self, original_path: Path, metadata: Dict[str, Any]) -> str:
+        except Exception as e:
+            logger.error(f"Batch processing error: {str(e)}")
+            # Return results collected so far with error status
+            for result in results:
+                result['success'] = False
+                result['error'] = str(e)
+            return results
+
+    def _extract_metadata_fields(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Generate a suggested filename based on image metadata.
+        Extract standardized metadata fields from raw metadata.
         
         Args:
-            original_path: Original image path
-            metadata: Image metadata dictionary
+            metadata: Raw metadata dictionary
             
         Returns:
-            Suggested filename with original extension
+            Dict containing extracted and standardized metadata fields
         """
-        components = []
+        result = {
+            'description': '',
+            'keywords': [],
+            'visual_elements': [],
+            'composition': [],
+            'mood': '',
+            'use_cases': [],
+            'technical_details': {}
+        }
         
-        # Add primary subject or first visual element if available
-        if metadata.get('visual_elements'):
-            components.append(metadata['visual_elements'][0].lower())
+        # Clean markdown formatting
+        def clean_text(text: str) -> str:
+            return text.replace('*', '').replace('`', '').replace('**', '').strip()
         
-        # Add mood if available
-        if metadata.get('mood'):
-            components.append(metadata['mood'].lower())
+        # Extract description from various possible tags
+        for desc_tag in ['IPTC:Caption-Abstract', 'XMP:Description', 'EXIF:ImageDescription']:
+            if desc_tag in metadata:
+                result['description'] = clean_text(str(metadata[desc_tag]))
+                break
         
-        # Add first composition element if available
-        if metadata.get('composition'):
-            components.append(metadata['composition'][0].lower())
+        # Extract keywords from various possible tags
+        for kw_tag in ['IPTC:Keywords', 'XMP:Subject']:
+            if kw_tag in metadata:
+                keywords = metadata[kw_tag]
+                if isinstance(keywords, list):
+                    result['keywords'].extend([clean_text(k) for k in keywords if k])
+                else:
+                    result['keywords'].append(clean_text(str(keywords)))
+                break
         
-        # Add first keyword if available and not already included
-        if metadata.get('keywords'):
-            keyword = metadata['keywords'][0].lower()
-            if keyword not in components:
-                components.append(keyword)
+        # Extract visual elements from Subject tag
+        if 'IPTC:Subject' in metadata:
+            elements = metadata['IPTC:Subject']
+            if isinstance(elements, list):
+                result['visual_elements'].extend([clean_text(e) for e in elements if e])
+            else:
+                result['visual_elements'].append(clean_text(str(elements)))
         
-        # If we have no components, use a portion of the description
-        if not components and metadata.get('description'):
-            # Take first few words of description
-            desc_words = metadata['description'].split()[:3]
-            components.extend(word.lower() for word in desc_words)
+        # Extract composition from Notes tag
+        if 'IPTC:Notes' in metadata:
+            notes = metadata['IPTC:Notes']
+            if isinstance(notes, str):
+                # Split on newlines and clean each line
+                result['composition'] = [clean_text(line) for line in notes.split('\n') if line.strip()]
+            elif isinstance(notes, list):
+                result['composition'].extend([clean_text(n) for n in notes if n])
+            else:
+                result['composition'].append(clean_text(str(notes)))
         
-        # Clean and join components
-        clean_components = []
-        for component in components:
-            # Remove special characters and spaces
-            clean = ''.join(c for c in component if c.isalnum() or c.isspace())
-            clean = clean.replace(' ', '_')
-            if clean:
-                clean_components.append(clean)
+        # Extract mood from various possible tags
+        for mood_tag in ['IPTC:Category', 'XMP:Mood']:
+            if mood_tag in metadata:
+                result['mood'] = clean_text(str(metadata[mood_tag]))
+                break
         
-        # Ensure we have at least one component
-        if not clean_components:
-            clean_components = ['image']
+        # Extract use cases from Usage tag
+        if 'XMP:Usage' in metadata:
+            cases = metadata['XMP:Usage']
+            if isinstance(cases, list):
+                result['use_cases'].extend([clean_text(c) for c in cases if c])
+            else:
+                result['use_cases'].append(clean_text(str(cases)))
         
-        # Join components and add original extension
-        suggested_name = '_'.join(clean_components)
-        original_extension = original_path.suffix
+        # Extract technical details
+        tech_fields = {
+            'format': 'File:FileType',
+            'dimensions': 'File:ImageSize',
+            'color_space': 'File:ColorSpace'
+        }
+        for key, tag in tech_fields.items():
+            if tag in metadata:
+                result['technical_details'][key] = clean_text(str(metadata[tag]))
         
-        return f"{suggested_name}{original_extension}"
+        return result
 
-    def _save_to_csv(self, results: List[Dict[str, Any]], output_path: str):
-        """Save results to CSV file."""
-        import pandas as pd
+    def _save_to_csv(self, results: List[Dict[str, Any]], output_path: str) -> None:
+        """Save results to a CSV file."""
+        import csv
         
-        # Flatten nested structures for CSV
-        flattened_results = []
-        for result in results:
-            flat_result = {
-                'original_path': result.get('original_path', ''),
-                'original_filename': result.get('original_filename', ''),
-                'new_filename': result.get('new_filename', ''),
-                'modified_path': result.get('modified_path', ''),
-                'suggested_filename': result.get('suggested_filename', ''),
-                'success': result.get('success', False),
-                'description': result.get('description', ''),
-                'keywords': ','.join(result.get('keywords', [])),
-            }
+        # Define CSV headers based on expected fields
+        headers = [
+            'original_path', 'original_filename', 'new_filename', 'modified_path',
+            'suggested_filename', 'success', 'error', 'description', 'keywords',
+            'visual_elements', 'composition', 'mood', 'use_cases',
+            'format', 'dimensions', 'color_space'
+        ]
+        
+        with open(output_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=headers, extrasaction='ignore')
+            writer.writeheader()
             
-            # Add technical details if present
-            if 'technical_details' in result:
-                for key, value in result['technical_details'].items():
-                    flat_result[f'technical_{key}'] = value
-                    
-            # Add other list fields
-            for field in ['visual_elements', 'composition', 'use_cases']:
-                if field in result:
-                    flat_result[field] = ','.join(result[field])
-                    
-            # Add mood if present
-            if 'mood' in result:
-                flat_result['mood'] = result['mood']
+            for result in results:
+                # Clean markdown formatting
+                def clean_text(text: str) -> str:
+                    return text.replace('*', '').replace('`', '').replace('**', '').strip()
                 
-            flattened_results.append(flat_result)
-            
-        # Convert to DataFrame and save
-        df = pd.DataFrame(flattened_results)
-        df.to_csv(output_path, index=False)
-        logger.info(f"Saved results to CSV: {output_path}")
+                # Prepare row data
+                row = {
+                    'original_path': result.get('original_path', ''),
+                    'original_filename': result.get('original_filename', ''),
+                    'new_filename': result.get('new_filename', ''),
+                    'modified_path': result.get('modified_path', ''),
+                    'suggested_filename': clean_text(result.get('suggested_filename', '')),
+                    'success': result.get('success', False),
+                    'error': result.get('error', ''),
+                    'description': clean_text(result.get('description', ''))
+                }
+                
+                # Handle list fields by joining with semicolons
+                for field in ['keywords', 'visual_elements', 'composition', 'use_cases']:
+                    values = result.get(field, [])
+                    if isinstance(values, (list, tuple)):
+                        row[field] = '; '.join(clean_text(str(v)) for v in values if v)
+                    else:
+                        row[field] = clean_text(str(values))
+                
+                # Handle mood field
+                row['mood'] = clean_text(result.get('mood', ''))
+                
+                # Handle technical details
+                tech = result.get('technical_details', {})
+                row.update({
+                    'format': clean_text(tech.get('format', '')),
+                    'dimensions': clean_text(tech.get('dimensions', '')),
+                    'color_space': clean_text(tech.get('color_space', ''))
+                })
+                
+                writer.writerow(row)
+                
+        logger.info(f"Results saved to CSV: {output_path}")
 
     def _save_to_xml(self, results: List[Dict[str, Any]], output_path: str):
         """Save results to XML file."""
@@ -462,151 +483,92 @@ class ExifTool:
             image = etree.SubElement(root, "image")
             
             # Add file information
-            original_path = etree.SubElement(image, "original_path")
-            original_path.text = str(result.get('original_path', ''))
+            file_info = etree.SubElement(image, "file_info")
+            for field in ['original_path', 'original_filename', 'new_filename', 'modified_path', 'suggested_filename']:
+                if result.get(field):
+                    elem = etree.SubElement(file_info, field)
+                    elem.text = str(result[field])
             
-            original_filename = etree.SubElement(image, "original_filename")
-            original_filename.text = str(result.get('original_filename', ''))
-            
-            if result.get('new_filename'):
-                new_filename = etree.SubElement(image, "new_filename")
-                new_filename.text = result['new_filename']
-            
-            if result.get('modified_path'):
-                modified_path = etree.SubElement(image, "modified_path")
-                modified_path.text = result['modified_path']
-            
-            if 'suggested_filename' in result:
-                suggested_filename = etree.SubElement(image, "suggested_filename")
-                suggested_filename.text = result['suggested_filename']
-            
-            success = etree.SubElement(image, "success")
+            # Add success and error info
+            status = etree.SubElement(image, "status")
+            success = etree.SubElement(status, "success")
             success.text = str(result.get('success', False))
             
+            if 'error' in result:
+                error = etree.SubElement(status, "error")
+                error.text = str(result['error'])
+            
+            # Add description
             if 'description' in result:
                 desc = etree.SubElement(image, "description")
-                desc.text = result['description']
+                desc.text = str(result['description'])
             
             # Add keywords
             if 'keywords' in result:
                 keywords = etree.SubElement(image, "keywords")
-                for kw in result['keywords']:
-                    keyword = etree.SubElement(keywords, "keyword")
-                    keyword.text = kw
+                for keyword in result['keywords']:
+                    if keyword:
+                        kw = etree.SubElement(keywords, "keyword")
+                        kw.text = str(keyword).strip()
             
             # Add technical details
             if 'technical_details' in result:
                 tech = etree.SubElement(image, "technical_details")
                 for key, value in result['technical_details'].items():
-                    detail = etree.SubElement(tech, key)
-                    detail.text = str(value)
+                    if value:  # Only add non-empty values
+                        detail = etree.SubElement(tech, key)
+                        detail.text = str(value)
             
-            # Add list fields
-            for field in ['visual_elements', 'composition', 'use_cases']:
-                if field in result:
-                    elements = etree.SubElement(image, field)
-                    for item in result[field]:
-                        element = etree.SubElement(elements, "item")
-                        element.text = item
+            # Add visual elements
+            if 'visual_elements' in result:
+                elements = etree.SubElement(image, "visual_elements")
+                for element in result['visual_elements']:
+                    if element:
+                        elem = etree.SubElement(elements, "element")
+                        elem.text = str(element).strip()
             
-            # Add mood if present
-            if 'mood' in result:
+            # Add composition
+            if 'composition' in result:
+                comp = etree.SubElement(image, "composition")
+                for technique in result['composition']:
+                    if technique:
+                        tech = etree.SubElement(comp, "technique")
+                        tech.text = str(technique).strip()
+            
+            # Add mood
+            if result.get('mood'):
                 mood = etree.SubElement(image, "mood")
-                mood.text = result['mood']
+                mood.text = str(result['mood'])
+            
+            # Add use cases
+            if 'use_cases' in result:
+                uses = etree.SubElement(image, "use_cases")
+                for use_case in result['use_cases']:
+                    if use_case:
+                        case = etree.SubElement(uses, "use_case")
+                        case.text = str(use_case).strip()
+            
+            # Add metadata if present
+            if 'metadata' in result:
+                metadata = etree.SubElement(image, "metadata")
+                for key, value in result['metadata'].items():
+                    if value:  # Only add non-empty values
+                        tag = etree.SubElement(metadata, key.replace(':', '_'))
+                        if isinstance(value, (list, tuple)):
+                            tag.text = '; '.join(str(v) for v in value if v)
+                        else:
+                            tag.text = str(value)
         
-        # Save to file
+        # Save to file with pretty formatting
         tree = etree.ElementTree(root)
         tree.write(output_path, pretty_print=True, xml_declaration=True, encoding='utf-8')
-        logger.info(f"Saved results to XML: {output_path}")
+        logger.info(f"Results saved to XML: {output_path}")
 
-class MetadataHandler:
-    """
-    High-level interface for metadata operations.
-    Wraps the ExifTool class with additional functionality.
-    """
-    def __init__(self, exiftool_path: Optional[str] = None):
-        """
-        Initialize the metadata handler.
-        
-        Args:
-            exiftool_path: Optional path to exiftool executable
-        """
-        self.exiftool = ExifTool(exiftool_path)
+    def __enter__(self):
+        """Context manager entry"""
+        return self
 
-    def read_metadata(self, image_path: Union[str, Path], tags: Optional[List[str]] = None) -> Dict[str, Any]:
-        """
-        Read metadata from an image file.
-        
-        Args:
-            image_path: Path to the image file
-            tags: Optional list of specific tags to read
-            
-        Returns:
-            Dict containing the metadata
-        """
-        return self.exiftool.read_metadata(image_path, tags)
-
-    def write_metadata(self, image_path: Union[str, Path], metadata: Dict[str, Any], backup: bool = True, duplicate: bool = False) -> Dict[str, Any]:
-        """
-        Write metadata to an image file.
-        
-        Args:
-            image_path: Path to the image file
-            metadata: Dictionary of metadata to write
-            backup: Whether to create a backup of the original file
-            duplicate: Whether to create a duplicate file before modifying
-            
-        Returns:
-            Dict containing the operation results including paths
-        """
-        return self.exiftool.write_metadata(image_path, metadata, backup, duplicate)
-
-    def copy_metadata(self, source_path: Union[str, Path], target_path: Union[str, Path], 
-                     tags: Optional[List[str]] = None) -> None:
-        """
-        Copy metadata from one image to another.
-        
-        Args:
-            source_path: Path to the source image
-            target_path: Path to the target image
-            tags: Optional list of specific tags to copy
-        """
-        self.exiftool.copy_metadata(source_path, target_path, tags)
-
-    def remove_metadata(self, image_path: Union[str, Path], tags: Optional[List[str]] = None, 
-                       backup: bool = True) -> None:
-        """
-        Remove metadata from an image file.
-        
-        Args:
-            image_path: Path to the image file
-            tags: Optional list of specific tags to remove (removes all if None)
-            backup: Whether to create a backup of the original file
-        """
-        self.exiftool.remove_metadata(image_path, tags, backup)
-
-    def process_batch(self, image_paths: List[Union[str, Path]], 
-                     operation: str,
-                     metadata: Optional[Dict[str, Any]] = None,
-                     tags: Optional[List[str]] = None,
-                     output_format: str = 'csv',
-                     output_path: Optional[str] = None,
-                     backup: bool = True,
-                     duplicate: bool = False) -> List[Dict[str, Any]]:
-        """
-        Process a batch of images with the same operation and save structured output.
-        
-        Args:
-            image_paths: List of paths to image files
-            operation: Operation to perform ('read', 'write', 'remove')
-            metadata: List of metadata dictionaries or single metadata dict
-            tags: Optional list of specific tags
-            output_format: Format to save results ('csv' or 'xml')
-            output_path: Path to save output file
-            backup: Whether to create backups (for 'write' and 'remove' operations)
-            duplicate: Whether to create duplicates before modifying
-            
-        Returns:
-            List of results (for 'read' operation) or empty list (for other operations)
-        """
-        return self.exiftool.process_batch(image_paths, operation, metadata, tags, output_format, output_path, backup, duplicate) 
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        if hasattr(self, 'et'):
+            self.et.terminate() 

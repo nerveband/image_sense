@@ -1,11 +1,7 @@
-"""Core functionality for image processing"""
+"""Core module initialization."""
+from .image_processor import ImageProcessor
+from .llm_handler import get_provider
+from .metadata_handler import MetadataHandler
+from .output_handler import OutputHandler
 
-from .image_utils import validate_image_path
-from .output_handler import save_metadata
-from .settings_manager import Settings
-
-__all__ = [
-    'validate_image_path',
-    'save_metadata',
-    'Settings'
-] 
+__all__ = ['ImageProcessor', 'get_provider', 'MetadataHandler', 'OutputHandler'] 
