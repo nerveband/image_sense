@@ -130,47 +130,37 @@ def compress_image(input_path: str, output_path: str, max_dimension: int = 1920,
     try:
         # Validate input
         if not os.path.exists(input_path):
-            raise ImageValidationError(f"Input file not found: {input_path}")
+            raise FileNotFoundError(f"Input file not found: {input_path}")
             
-        # Create output directory if it doesn't exist
-        output_dir = os.path.dirname(output_path)
-        if output_dir and not os.path.exists(output_dir):
-            try:
-                os.makedirs(output_dir)
-            except Exception as e:
-                raise ImageValidationError(f"Failed to create output directory: {str(e)}")
+        # Validate quality parameter
+        if not 0 <= quality <= 100:
+            raise ValueError(f"Quality must be between 0 and 100, got {quality}")
 
-        # Open and validate image
-        try:
-            img = Image.open(input_path)
-        except Exception as e:
-            raise ImageValidationError(f"Failed to open image: {str(e)}")
-
-        # Calculate new dimensions
-        width, height = img.size
-        if max(width, height) > max_dimension:
-            if width > height:
-                new_width = max_dimension
-                new_height = int(height * (max_dimension / width))
-            else:
-                new_height = max_dimension
-                new_width = int(width * (max_dimension / height))
-            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-        # Save compressed image
-        try:
+        # Open and process image
+        with Image.open(input_path) as img:
+            # Convert to RGB if necessary
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+                
+            # Calculate new dimensions
+            width, height = img.size
+            if width > max_dimension or height > max_dimension:
+                if width > height:
+                    new_width = max_dimension
+                    new_height = int(height * (max_dimension / width))
+                else:
+                    new_height = max_dimension
+                    new_width = int(width * (max_dimension / height))
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Save compressed image
             img.save(output_path, 'JPEG', quality=quality, optimize=True)
-            logger.info(f"Compressed image saved to: {output_path}")
-            return output_path
-        except Exception as e:
-            raise ImageCompressionError(f"Failed to save compressed image: {str(e)}")
-
-    except (ImageValidationError, ImageCompressionError) as e:
+            
+        return output_path
+        
+    except Exception as e:
         logger.error(f"Error compressing image: {str(e)}")
         raise
-    except Exception as e:
-        logger.error(f"Unexpected error compressing image: {str(e)}")
-        raise ImageCompressionError(f"Failed to compress image: {str(e)}")
 
 def compress_image_batch(
     file_paths: List[str],

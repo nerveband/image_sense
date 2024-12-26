@@ -8,6 +8,8 @@ from pathlib import Path
 from click.testing import CliRunner
 from src.cli import cli
 from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import patch
+from pytest_mock import mocker
 
 @pytest.fixture
 def runner():
@@ -17,43 +19,53 @@ def runner():
 @pytest.fixture
 def mock_env(monkeypatch):
     """Mock environment variables"""
-    monkeypatch.setenv('GOOGLE_API_KEY', 'test_api_key')
-    monkeypatch.setenv('IMAGE_SENSE_MODEL', 'gemini-pro-vision')
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test_key')
+    monkeypatch.setenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
 
 @pytest.fixture
-def mock_image_processor(monkeypatch):
-    """Mock image processor for testing."""
-    processor = MagicMock()
-    processor.analyze_image = AsyncMock(return_value={"description": "Test analysis"})
-    processor.process_images = AsyncMock(return_value=[{"description": "Test analysis"}])
-    
-    def mock_init(*args, **kwargs):
-        return processor
-    
-    monkeypatch.setattr('src.core.image_processor.ImageProcessor', mock_init)
-    return processor
+def mock_image_processor(mocker):
+    """Mock ImageProcessor for testing"""
+    processor = mocker.patch('src.cli.main.ImageProcessor')
+    processor_instance = mocker.MagicMock()
+    processor.return_value = processor_instance
+    processor_instance.process_single.return_value = {
+        'success': True,
+        'original_path': 'test.jpg',
+        'original_filename': 'test.jpg',
+        'description': 'Test image',
+        'keywords': ['test'],
+        'technical_details': 'JPEG image',
+        'visual_elements': ['test element'],
+        'composition': 'test composition',
+        'mood': 'test mood',
+        'use_cases': ['test use case'],
+        'suggested_filename': 'test_suggested.jpg'
+    }
+    return processor_instance
 
 def test_single_gemini_csv(runner, test_image_path, mock_image_processor, mock_env):
     """Test single image processing with Gemini model and CSV output"""
     with runner.isolated_filesystem():
-        result = runner.invoke(cli, [
-            'process',
-            test_image_path,
-            '--output-format', 'csv'
-        ])
-        assert result.exit_code == 0
-        assert "Processing complete" in result.output
+        with patch('src.core.image_processor.get_provider') as mock_provider:
+            result = runner.invoke(cli, [
+                'process',
+                test_image_path,
+                '--output-format', 'csv'
+            ])
+            assert result.exit_code == 0
+            assert mock_image_processor.analyze_image.called
 
 def test_single_gemini_xml(runner, test_image_path, mock_image_processor, mock_env):
     """Test single image processing with Gemini model and XML output"""
     with runner.isolated_filesystem():
-        result = runner.invoke(cli, [
-            'process',
-            test_image_path,
-            '--output-format', 'xml'
-        ])
-        assert result.exit_code == 0
-        assert "Processing complete" in result.output
+        with patch('src.core.image_processor.get_provider') as mock_provider:
+            result = runner.invoke(cli, [
+                'process',
+                test_image_path,
+                '--output-format', 'xml'
+            ])
+            assert result.exit_code == 0
+            assert mock_image_processor.analyze_image.called
 
 @pytest.mark.parametrize("model", [
     '2-flash',
@@ -64,13 +76,14 @@ def test_single_gemini_xml(runner, test_image_path, mock_image_processor, mock_e
 def test_model_selection(runner, test_image_path, mock_image_processor, mock_env, model):
     """Test different model selections"""
     with runner.isolated_filesystem():
-        result = runner.invoke(cli, [
-            'process',
-            test_image_path,
-            '--model', model
-        ])
-        assert result.exit_code == 0
-        assert "Processing complete" in result.output
+        with patch('src.core.image_processor.get_provider') as mock_provider:
+            result = runner.invoke(cli, [
+                'process',
+                test_image_path,
+                '--model', model
+            ])
+            assert result.exit_code == 0
+            assert mock_image_processor.analyze_image.called
 
 def test_batch_processing(runner, test_images_dir, mock_image_processor, mock_env):
     """Test batch processing of images"""

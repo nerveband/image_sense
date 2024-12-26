@@ -28,7 +28,7 @@ class Config:
         self.default_model = os.getenv('DEFAULT_MODEL', 'gemini-2.0-flash-exp')
         
         # Verbose output
-        self.verbose_output = os.getenv('VERBOSE_OUTPUT', 'false').lower() == 'true'
+        self.verbose_output = os.getenv('VERBOSE_OUTPUT', 'true').lower() == 'true'
         
         # EXIF writing
         self.write_exif = os.getenv('WRITE_EXIF', 'true').lower() == 'true'

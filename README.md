@@ -116,6 +116,65 @@ VERBOSE_OUTPUT=false
 LOG_LEVEL=INFO
 ```
 
+## Recent Updates
+
+### Enhanced Image Analysis and Feedback (December 25, 2023)
+
+1. **Improved Verbose Output (Now Default)**
+   - Verbose output is now enabled by default for better visibility
+   - Added `--verboseoff` flag to disable verbose output if needed
+   - Added detailed progress indicators for:
+     - Image optimization/compression
+     - Gemini API interactions
+     - XML parsing and validation
+     - CSV output generation
+
+2. **Enhanced Image Processing**
+   - Added automatic image optimization for Gemini API
+   - Shows compression statistics (original size, compressed size, reduction percentage)
+   - Better error handling for image processing failures
+
+3. **Improved Data Handling**
+   - Better XML parsing with proper Unicode support
+   - Enhanced CSV output with all fields properly populated
+   - Added suggested filename to output
+   - Fixed various edge cases in data extraction
+
+4. **Configuration Updates**
+   - Environment variables are now properly respected (VERBOSE_OUTPUT, GOOGLE_API_KEY, etc.)
+   - Verbose output can be controlled via:
+     - Environment variable: `VERBOSE_OUTPUT=false`
+     - CLI flag: `--verboseoff`
+     - Default is verbose on
+
+### Usage Examples
+
+Process a single image with default settings (verbose):
+```bash
+image_sense process path/to/image.jpg
+```
+
+Process a single image with verbose output disabled:
+```bash
+image_sense process path/to/image.jpg --verboseoff
+```
+
+Bulk process a directory of images:
+```bash
+image_sense bulk-process path/to/directory
+```
+
+Bulk process with specific options:
+```bash
+image_sense bulk-process path/to/directory --recursive --verboseoff --model 2-flash
+```
+
+### Environment Variables
+
+- `VERBOSE_OUTPUT`: Control verbose output (default: "true")
+- `GOOGLE_API_KEY`: Your Google API key for Gemini
+- `GEMINI_MODEL`: Default model to use (default: "gemini-2.0-flash-exp")
+
 ## API Keys
 
 You'll need a Google API key with Gemini Vision API access enabled:
