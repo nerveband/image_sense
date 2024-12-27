@@ -13,9 +13,12 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 import shutil
 from rich.console import Console
+from rich.table import Table
+from rich import box
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
 import google.generativeai as genai
 from dotenv import load_dotenv
+from ..core.config import config
 
 from ..core.image_processor import ImageProcessor
 from ..core.metadata_handler import MetadataHandler
@@ -43,17 +46,7 @@ def get_model_from_env() -> str:
 
 @click.group()
 def cli():
-    """Image Sense CLI for processing and analyzing images.
-    
-    Configuration Priority:
-    1. Command line arguments (highest priority)
-    2. Environment variables from .env file
-    3. Default values in code (lowest priority)
-    
-    Example:
-    $ image_sense process image.jpg --model 2-flash  # Command line args override all
-    $ image_sense process image.jpg  # Uses .env settings or defaults
-    """
+    """Image Sense CLI for processing and analyzing images."""
     # Display banner
     console.print(BANNER)
     
@@ -63,65 +56,39 @@ def cli():
 
 @cli.command()
 @click.argument('image_path', type=click.Path(exists=True))
-@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default=None,
-              help='Output format for metadata (csv or xml). Overrides DEFAULT_OUTPUT_FORMAT from .env')
-@click.option('--no-compress', is_flag=True, help='Disable image compression. Overrides COMPRESSION_ENABLED from .env')
+@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
+              help='Output format for metadata (csv or xml)')
+@click.option('--no-compress', is_flag=True, help='Disable image compression (not recommended for large files)')
 @click.option('--model', type=click.Choice(list(AVAILABLE_MODELS.keys())), default=None,
-              help='Model to use for processing. Overrides DEFAULT_MODEL from .env')
-@click.option('--verboseoff', is_flag=True, help='Disable verbose output. Overrides VERBOSE_OUTPUT from .env')
-@click.option('--api-key', help='Google API key. Overrides GOOGLE_API_KEY from .env')
-@click.option('--batch-size', type=int, help='Batch size for processing. Overrides DEFAULT_BATCH_SIZE from .env')
-@click.option('--output-dir', help='Output directory. Overrides OUTPUT_DIRECTORY from .env')
-@click.option('--auto-append', is_flag=True, help='Automatically append to existing CSV files. Overrides AUTO_APPEND_CSV from .env')
-def process(image_path: str, output_format: str, no_compress: bool, model: Optional[str] = None, 
-           verboseoff: bool = False, api_key: Optional[str] = None, batch_size: Optional[int] = None,
-           output_dir: Optional[str] = None, auto_append: Optional[bool] = None):
-    """Process a single image.
-    
-    All command line options override their corresponding environment variables from .env.
-    If an option is not specified, the value from .env will be used.
-    If neither is specified, built-in defaults will be used.
-    """
+              help='Model to use for processing')
+@click.option('--verboseoff', is_flag=True, help='Disable verbose output (verbose is on by default)')
+def process(image_path: str, output_format: str, no_compress: bool, model: Optional[str] = None, verboseoff: bool = False):
+    """Process a single image"""
     try:
-        # Get API key with priority order
-        api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        # Get API key from environment
+        api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            click.echo("Error: GOOGLE_API_KEY not provided via --api-key or in .env", err=True)
+            click.echo("Error: GOOGLE_API_KEY environment variable not set", err=True)
             sys.exit(1)
 
-        # Get verbose setting with priority order
+        # Get verbose setting from environment or use default (True)
         verbose = not verboseoff
-
-        # Get output format with priority order
-        output_format = output_format or os.getenv('DEFAULT_OUTPUT_FORMAT', 'csv')
-
-        # Get auto append setting with priority order
-        should_append = auto_append if auto_append is not None else os.getenv('AUTO_APPEND_CSV', 'false').lower() == 'true'
 
         # Initialize processor with model if specified
         processor = ImageProcessor(
             api_key=api_key,
             model=AVAILABLE_MODELS.get(model) if model else get_model_from_env(),
-            verbose_output=verbose,
-            batch_size=batch_size
+            verbose_output=verbose
         )
 
-        # Process image
+        # Process image with compression by default
         result = asyncio.run(processor.analyze_image(image_path))
         
         # Save output
-        output_base = os.path.join(output_dir or os.getenv('OUTPUT_DIRECTORY', '.'),
-                                 os.path.splitext(os.path.basename(image_path))[0])
+        output_base = os.path.splitext(image_path)[0]
         if output_format == 'csv':
             output_path = f"{output_base}_metadata.csv"
-            # Check if file exists and we should append
-            if os.path.exists(output_path) and should_append:
-                if click.confirm(f"CSV file {output_path} exists. Do you want to append to it?", default=True):
-                    processor.save_to_csv([result], output_path, append=True)
-                else:
-                    processor.save_to_csv([result], output_path, append=False)
-            else:
-                processor.save_to_csv([result], output_path, append=False)
+            processor.save_to_csv([result], output_path)
         else:
             output_path = f"{output_base}_metadata.xml"
             processor.save_to_xml([result], output_path)
@@ -135,48 +102,31 @@ def process(image_path: str, output_format: str, no_compress: bool, model: Optio
 
 @cli.command('bulk-process')
 @click.argument('input_path', type=click.Path(exists=True))
-@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default=None,
-              help='Output format for results. Overrides DEFAULT_OUTPUT_FORMAT from .env')
+@click.option('--output-format', '-f', type=click.Choice(['csv', 'xml']), default='csv',
+              help='Output format for results')
 @click.option('--recursive', '-r', is_flag=True, help='Process subdirectories recursively')
-@click.option('--compress/--no-compress', default=None, help='Enable/disable compression. Overrides COMPRESSION_ENABLED from .env')
+@click.option('--compress', '-c', is_flag=True, help='Compress images before processing')
 @click.option('--model', '-m', type=click.Choice(['2-flash', '1.5-flash', '1.5-pro', 'pro']),
-              help='Model to use for processing. Overrides DEFAULT_MODEL from .env')
-@click.option('--verboseoff', is_flag=True, help='Disable verbose output. Overrides VERBOSE_OUTPUT from .env')
-@click.option('--api-key', help='Google API key. Overrides GOOGLE_API_KEY from .env')
-@click.option('--batch-size', type=int, help='Batch size for processing. Overrides DEFAULT_BATCH_SIZE from .env')
-@click.option('--output-dir', help='Output directory. Overrides OUTPUT_DIRECTORY from .env')
-@click.option('--auto-append', is_flag=True, help='Automatically append to existing CSV files. Overrides AUTO_APPEND_CSV from .env')
+              help='Model to use for processing')
+@click.option('--verboseoff', is_flag=True, help='Disable verbose output (verbose is on by default)')
 def bulk_process(input_path: str, output_format: str, recursive: bool, compress: bool, 
-                model: Optional[str] = None, verboseoff: bool = False, api_key: Optional[str] = None,
-                batch_size: Optional[int] = None, output_dir: Optional[str] = None, auto_append: Optional[bool] = None):
-    """Process multiple images in a directory.
-    
-    All command line options override their corresponding environment variables from .env.
-    If an option is not specified, the value from .env will be used.
-    If neither is specified, built-in defaults will be used.
-    """
+                model: Optional[str] = None, verboseoff: bool = False):
+    """Process multiple images in a directory."""
     try:
-        # Get API key with priority order
-        api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        # Get API key from environment
+        api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
-            click.echo("Error: GOOGLE_API_KEY not provided via --api-key or in .env", err=True)
+            click.echo("Error: GOOGLE_API_KEY environment variable not set", err=True)
             sys.exit(1)
+            
+        # Get verbose setting from environment or use default (True)
+        verbose = not verboseoff and os.getenv("VERBOSE_OUTPUT", "true").lower() != "false"
 
-        # Get verbose setting with priority order
-        verbose = not verboseoff
-
-        # Get output format with priority order
-        output_format = output_format or os.getenv('DEFAULT_OUTPUT_FORMAT', 'csv')
-
-        # Get auto append setting with priority order
-        should_append = auto_append if auto_append is not None else os.getenv('AUTO_APPEND_CSV', 'false').lower() == 'true'
-
-        # Initialize processor with model if specified
+        # Initialize processor
         processor = ImageProcessor(
             api_key=api_key,
             model=AVAILABLE_MODELS.get(model) if model else get_model_from_env(),
-            verbose_output=verbose,
-            batch_size=batch_size
+            verbose_output=verbose
         )
 
         # Get all image files
@@ -196,23 +146,62 @@ def bulk_process(input_path: str, output_format: str, recursive: bool, compress:
         # Process images
         results = asyncio.run(processor.process_batch(image_files))
         
-        # Save results
-        output_dir = output_dir or os.getenv('OUTPUT_DIRECTORY', os.path.dirname(input_path))
-        if output_format == 'csv':
-            output_path = os.path.join(output_dir, 'results.csv')
-            # Check if file exists and we should append
-            if os.path.exists(output_path) and should_append:
-                if click.confirm(f"CSV file {output_path} exists. Do you want to append to it?", default=True):
-                    processor.save_to_csv(results, output_path, append=True)
-                else:
-                    processor.save_to_csv(results, output_path, append=False)
-            else:
-                processor.save_to_csv(results, output_path, append=False)
-        else:
-            output_path = os.path.join(output_dir, 'results.xml')
-            processor.save_to_xml(results, output_path)
-
-        click.echo(f"Results saved to {output_path}")
+        # Get output directory and base filename from input path
+        output_dir = input_path
+        folder_name = os.path.basename(os.path.normpath(input_path))
+        
+        # Always save CSV by default
+        csv_path = os.path.join(output_dir, f"{folder_name}_results.csv")
+        processor.save_to_csv(results, csv_path)
+        click.echo(f"Results saved to {csv_path}")
+        
+        # Pretty print results in terminal
+        if verbose:
+            # Create a table
+            table = Table(
+                title="📊 Analysis Results", 
+                box=box.ROUNDED,
+                show_header=True,
+                header_style="bold magenta",
+                show_lines=True,
+                width=None,
+                pad_edge=False,
+                collapse_padding=True
+            )
+            
+            # Add columns with better formatting
+            table.add_column("📁 Original Filename", style="cyan", no_wrap=True)
+            table.add_column("📝 Description", style="green", max_width=60, overflow="fold")
+            table.add_column("🏷️ Keywords", style="yellow", max_width=30, overflow="fold")
+            table.add_column("💾 Suggested Filename", style="blue", no_wrap=True)
+            
+            # Add rows with better data handling
+            for result in results:
+                description = result.get('description', '').strip()
+                keywords = result.get('keywords', [])
+                if isinstance(keywords, str):
+                    keywords = keywords.split(';')
+                keywords_str = '\n'.join(k.strip() for k in keywords if k.strip())
+                
+                table.add_row(
+                    result.get('original_filename', ''),
+                    description,
+                    keywords_str,
+                    result.get('suggested_filename', '')
+                )
+            
+            # Print the table with padding
+            console.print("\n")
+            console.print(table, justify="center")
+            console.print("\n")
+        
+        # Save XML if enabled in environment or explicitly requested
+        save_xml = os.getenv('SAVE_XML_OUTPUT', 'true').lower() == 'true' or output_format == 'xml'
+        if save_xml:
+            xml_path = os.path.join(output_dir, f"{folder_name}_results.xml")
+            processor.save_to_xml(results, xml_path)
+            click.echo(f"XML results saved to {xml_path}")
+        
         return 0
 
     except Exception as e:
