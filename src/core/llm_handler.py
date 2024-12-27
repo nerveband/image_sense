@@ -13,7 +13,7 @@ from pathlib import Path
 import shutil
 import absl.logging
 from . import image_utils
-from .config import config
+from .config import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +24,9 @@ logging.root.removeHandler(absl.logging._absl_handler)
 
 # Rich console for pretty output
 console = Console()
+
+# Create config instance
+config = Config()
 
 # Content template for image analysis
 CONTENT_TEMPLATE = """Analyze this image and provide detailed information in XML format. Follow these guidelines:
@@ -54,19 +57,27 @@ Example format:
 class GeminiProvider:
     """Provider class for Google's Gemini Vision API."""
     
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp", verbose: bool = False):
+    def __init__(self, api_key: str, model: Optional[str] = None, verbose: bool = False):
         """Initialize the Gemini provider."""
         self.api_key = api_key
-        self.model_name = model
         self.verbose = verbose
         
         # Configure the API
         genai.configure(api_key=api_key)
         
+        # Get config instance
+        config = Config()
+        
+        # Set model name
+        logger.debug(f"Initializing GeminiProvider with model parameter: {model}")
+        logger.debug(f"Config default_model: {config.default_model}")
+        self.model_name = model or config.default_model
+        logger.debug(f"Selected model_name: {self.model_name}")
+        
         try:
-            self.model = genai.GenerativeModel(model)
+            self.model = genai.GenerativeModel(self.model_name)
             if self.verbose:
-                console.print(f"[green]✓[/] Initialized Gemini model: {model}")
+                console.print(f"[green]✓[/] Initialized Gemini model: {self.model_name}")
         except Exception as e:
             if self.verbose:
                 console.print(f"[red]✗ Error initializing Gemini model:[/] {str(e)}")
@@ -205,6 +216,6 @@ class GeminiProvider:
                 })
         return results
 
-def get_provider(api_key: str, model: str = "gemini-2.0-flash-exp", verbose: bool = False) -> GeminiProvider:
+def get_provider(api_key: str, model: Optional[str] = None, verbose: bool = False) -> GeminiProvider:
     """Get an instance of the Gemini provider."""
     return GeminiProvider(api_key, model, verbose)

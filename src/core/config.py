@@ -1,13 +1,32 @@
 """Configuration module for image processing."""
 import os
+import logging
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv, find_dotenv
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class Config:
     """Configuration class for image processing."""
     
     def __init__(self):
         """Initialize configuration with default values."""
+        # Ensure environment variables are loaded
+        env_path = find_dotenv()
+        if env_path:
+            load_dotenv(env_path)
+            logger.debug(f"Loaded environment from: {env_path}")
+        
+        # Model settings
+        self.default_model = os.getenv('DEFAULT_MODEL')
+        if not self.default_model:
+            logger.warning("DEFAULT_MODEL not found in environment, using default: gemini-2.0-flash-exp")
+            self.default_model = 'gemini-2.0-flash-exp'
+        else:
+            logger.debug(f"Using DEFAULT_MODEL from environment: {self.default_model}")
+        
         # Logging
         self.log_level = os.getenv('LOG_LEVEL', 'INFO')
         
@@ -24,9 +43,6 @@ class Config:
         
         # Batch processing
         self.default_batch_size = int(os.getenv('DEFAULT_BATCH_SIZE', '5'))
-        
-        # Model settings
-        self.default_model = os.getenv('DEFAULT_MODEL', 'gemini-2.0-flash-exp')
         
         # Verbose output
         self.verbose_output = os.getenv('VERBOSE_OUTPUT', 'true').lower() == 'true'

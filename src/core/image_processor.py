@@ -17,6 +17,8 @@ from rich.progress import (
     Progress, SpinnerColumn, TextColumn, BarColumn,
     TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
 )
+from rich.table import Table
+from rich import box
 from lxml import etree
 import shutil
 import absl.logging
@@ -236,17 +238,26 @@ Important:
         self.metadata_handler = MetadataHandler()
         self.output_handler = OutputHandler()
         
-        # Initialize provider and model
-        self.provider = get_provider(api_key, verbose=verbose_output)
-        genai.configure(api_key=api_key)
-        
         # Set model name from environment or parameter
-        if model in self.AVAILABLE_MODELS:
+        if model is None:
+            # No model specified, use config default
+            self.model = self.config.default_model
+            self.logger.debug(f"Using model from config: {self.model}")
+        elif model in self.AVAILABLE_MODELS:
+            # Short model name provided (e.g., '1.5-flash')
             self.model = self.AVAILABLE_MODELS[model]
-        elif model in self.AVAILABLE_MODELS.values():
-            self.model = model
+            self.logger.debug(f"Using model from AVAILABLE_MODELS mapping: {self.model}")
         else:
-            self.model = os.getenv('DEFAULT_MODEL', 'gemini-2.0-flash-exp')
+            # Invalid model name
+            self.logger.warning(f"Invalid model name '{model}', falling back to config default")
+            self.model = self.config.default_model
+            self.logger.debug(f"Using model from config: {self.model}")
+        
+        self.logger.debug(f"Final selected model: {self.model}")
+        
+        # Initialize provider and model
+        self.provider = get_provider(api_key, model=self.model, verbose=verbose_output)
+        genai.configure(api_key=api_key)
         
         # Set batch size based on model and environment
         default_batch = int(os.getenv('DEFAULT_BATCH_SIZE', '8'))
@@ -473,15 +484,41 @@ Important:
             # Analyze image
             result = await self._analyze_image_async(image_path)
             
+            # Extract XML content
+            xml_content = result.get('content', '')
+            if xml_content:
+                try:
+                    # Remove the XML declaration before parsing
+                    if xml_content.startswith('<?xml'):
+                        xml_content = xml_content[xml_content.find('?>')+2:].strip()
+                    
+                    root = etree.fromstring(xml_content.encode('utf-8'))
+                    
+                    # Extract all fields
+                    result['description'] = root.find('description').text.strip() if root.find('description') is not None else ''
+                    result['keywords'] = [k.text.strip() for k in root.findall('.//keyword') if k.text]
+                    result['technical_details'] = {
+                        'format': image_info['format'],
+                        'dimensions': f"{image_info['size'][0]}x{image_info['size'][1]}",
+                        'color_space': root.find('technical_details').text.strip() if root.find('technical_details') is not None else ''
+                    }
+                    result['visual_elements'] = [e.text.strip() for e in root.findall('.//visual_elements') if e.text]
+                    result['composition'] = root.find('composition').text.strip() if root.find('composition') is not None else ''
+                    result['mood'] = root.find('mood').text.strip() if root.find('mood') is not None else ''
+                    result['use_cases'] = [u.text.strip() for u in root.findall('.//use_case') if u.text]
+                    result['suggested_filename'] = root.find('suggested_filename').text.strip() if root.find('suggested_filename') is not None else ''
+                except Exception as e:
+                    self.logger.error(f"Error parsing XML: {e}")
+                    if self.verbose_output:
+                        self.console.print(f"[red]✗ Error parsing XML:[/] {str(e)}")
+                        self.console.print("[yellow]⚠️ Raw XML content:[/]")
+                        self.console.print(xml_content)
+            
             # Add metadata
             result.update({
                 'original_path': image_path,
                 'original_filename': os.path.basename(image_path),
-                'technical_details': {
-                    'format': image_info['format'],
-                    'dimensions': f"{image_info['size'][0]}x{image_info['size'][1]}",
-                    'color_space': image_info['mode']
-                }
+                'success': True
             })
             
             # Calculate processing time
@@ -498,7 +535,7 @@ Important:
             error_msg = f"Failed to analyze image: {str(e)}"
             if self.verbose_output:
                 self.console.print(f"[red]✗ {error_msg}[/]")
-            logger.error(error_msg)
+            self.logger.error(error_msg)
             raise ImageProcessingError(error_msg, original_error=e)
 
     async def _analyze_image_async(self, image_path: str) -> Dict[str, Any]:
@@ -777,8 +814,6 @@ Important:
     def save_to_csv(self, results: List[Dict[str, Any]], output_path: str):
         """Save results to CSV file."""
         import pandas as pd
-        from rich.table import Table
-        from rich import box
         
         # Flatten nested structures for CSV
         flattened_results = []
@@ -787,34 +822,30 @@ Important:
                 'original_path': result.get('original_path', ''),
                 'original_filename': result.get('original_filename', ''),
                 'success': result.get('success', False),
-                'error': result.get('error', '')
+                'error': result.get('error', ''),
+                'description': result.get('description', ''),
+                'mood': result.get('mood', '')
             }
             
-            # Only add analysis fields if successful
-            if result.get('success', True):
-                # Add description and mood
-                flat_result['description'] = result.get('description', '')
-                flat_result['mood'] = result.get('mood', '')
-                
-                # Add technical details
-                tech = result.get('technical_details', {})
-                if isinstance(tech, dict):
-                    flat_result.update({
-                        'format': tech.get('format', ''),
-                        'dimensions': tech.get('dimensions', ''),
-                        'color_space': tech.get('color_space', '')
-                    })
-                
-                # Handle list fields by joining with semicolons
-                for field in ['keywords', 'visual_elements', 'composition', 'use_cases']:
-                    values = result.get(field, [])
-                    if isinstance(values, list):
-                        flat_result[field] = '; '.join(str(v).strip() for v in values if v)
-                    else:
-                        flat_result[field] = str(values).strip()
-                
-                # Add suggested filename
-                flat_result['suggested_filename'] = result.get('suggested_filename', '')
+            # Add technical details
+            tech = result.get('technical_details', {})
+            if isinstance(tech, dict):
+                flat_result.update({
+                    'format': tech.get('format', ''),
+                    'dimensions': tech.get('dimensions', ''),
+                    'color_space': tech.get('color_space', '')
+                })
+            
+            # Handle list fields by joining with semicolons
+            for field in ['keywords', 'visual_elements', 'composition', 'use_cases']:
+                values = result.get(field, [])
+                if isinstance(values, list):
+                    flat_result[field] = '; '.join(str(v).strip() for v in values if v)
+                else:
+                    flat_result[field] = str(values).strip()
+            
+            # Add suggested filename
+            flat_result['suggested_filename'] = result.get('suggested_filename', '')
             
             flattened_results.append(flat_result)
         
@@ -847,7 +878,7 @@ Important:
         df.to_csv(output_path, index=False)
         
         if self.verbose_output:
-            console.print(f"[green]✓ Results saved to CSV:[/] {output_path}")
+            self.console.print(f"[green]✓ Results saved to CSV:[/] {output_path}")
             
             # Create a preview table
             preview = Table(
@@ -875,12 +906,12 @@ Important:
             # Add rows (limit to first 5)
             for _, row in df.head().iterrows():
                 preview.add_row(
-                    *[str(row[col]).strip() for col in preview_columns if col in df.columns]
+                    *[str(row[col]) for col in preview_columns if col in df.columns]
                 )
             
-            console.print("\n")
-            console.print(preview, justify="center")
-            console.print("\n")
+            self.console.print("\n")
+            self.console.print(preview, justify="center")
+            self.console.print("\n")
             
         logger.info(f"Saved results to CSV: {output_path}")
 

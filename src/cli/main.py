@@ -17,20 +17,21 @@ from rich.table import Table
 from rich import box
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, TransferSpeedColumn
 import google.generativeai as genai
-from dotenv import load_dotenv
-from ..core.config import config
+from dotenv import load_dotenv, find_dotenv
 
+# Import our modules
+from ..core.config import Config
 from ..core.image_processor import ImageProcessor
 from ..core.metadata_handler import MetadataHandler
 from ..core.output_handler import OutputHandler
-from ..core.config import Config
 from ..core.ascii_art import BANNER
 
 # Initialize Rich console
 console = Console()
 
-# Load environment variables
-load_dotenv()
+# Create a single Config instance that will be used throughout
+config = Config()
+console.print(f"[dim]Using model from config: {config.default_model}[/]")
 
 # Available models
 AVAILABLE_MODELS = {
@@ -40,10 +41,6 @@ AVAILABLE_MODELS = {
     'pro': 'gemini-1.5-pro',               # Alias for 1.5-pro
 }
 
-def get_model_from_env() -> str:
-    """Get model name from environment variable or use default."""
-    return os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
-
 @click.group()
 def cli():
     """Image Sense CLI for processing and analyzing images."""
@@ -51,7 +48,6 @@ def cli():
     console.print(BANNER)
     
     # Set up logging based on configuration
-    config = Config()
     logging.basicConfig(level=getattr(logging, config.log_level.upper()))
 
 @cli.command()
@@ -74,10 +70,11 @@ def process(image_path: str, output_format: str, no_compress: bool, model: Optio
         # Get verbose setting from environment or use default (True)
         verbose = not verboseoff
 
-        # Initialize processor with model if specified
+        # Initialize processor with model if specified and pass the config instance
         processor = ImageProcessor(
             api_key=api_key,
-            model=AVAILABLE_MODELS.get(model) if model else get_model_from_env(),
+            config=config,
+            model=model,
             verbose_output=verbose
         )
 
@@ -125,7 +122,8 @@ def bulk_process(input_path: str, output_format: str, recursive: bool, compress:
         # Initialize processor
         processor = ImageProcessor(
             api_key=api_key,
-            model=AVAILABLE_MODELS.get(model) if model else get_model_from_env(),
+            config=config,
+            model=model,
             verbose_output=verbose
         )
 
